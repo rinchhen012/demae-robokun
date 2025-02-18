@@ -257,6 +257,16 @@ export default function Home() {
                           Reserved
                         </span>
                       )}
+                      {order.items && (
+                        console.log('Checking items for utensils:', order.items),
+                        (order.items.includes('箸、スプーン、おしぼり等／Utensils') ||
+                         order.items.includes('箸、スプーン、おしぼり等') ||
+                         order.items.includes('Utensils')) && (
+                          <span className="px-1 py-0.5 bg-green-100 text-green-600 rounded-full text-sm font-bold">
+                            Utensils
+                          </span>
+                        )
+                      )}
                       {order.receiptName && order.receiptName !== '-' && (
                         <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
                           Receipt

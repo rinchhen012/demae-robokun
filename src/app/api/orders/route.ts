@@ -54,7 +54,7 @@ export async function POST(request: Request) {
           customerName: order.customerName,
           customerPhone: order.customerPhone,
           status: order.status,
-          items: '',  // You might want to update this based on your needs
+          items: order.items || '',
           subtotal: order.priceInfo.subtotal,
           deliveryFee: order.priceInfo.deliveryFee,
           totalAmount: order.priceInfo.total,
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
           customerName: order.customerName,
           customerPhone: order.customerPhone,
           status: order.status,
-          items: '',  // You might want to update this based on your needs
+          items: order.items || '',
           subtotal: order.priceInfo.subtotal,
           deliveryFee: order.priceInfo.deliveryFee,
           totalAmount: order.priceInfo.total,
