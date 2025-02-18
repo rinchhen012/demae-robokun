@@ -2,10 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import toast, { Toaster } from 'react-hot-toast';
-// @ts-ignore
-import Kuroshiro from 'kuroshiro';
-// @ts-ignore
-import KuromojiAnalyzer from 'kuroshiro-analyzer-kuromoji';
 
 interface Order {
   id?: string;
@@ -29,15 +25,31 @@ interface Order {
   isActive?: boolean;
 }
 
+// Add ClientDate component
+const ClientDate = () => {
+  const [date, setDate] = useState('');
+
+  useEffect(() => {
+    setDate(`${new Date().toLocaleDateString('ja-JP', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })} ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}`);
+  }, []);
+
+  return (
+    <span className="text-sm text-gray-600">
+      {date}
+    </span>
+  );
+};
+
 export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
-  const [kuroshiro, setKuroshiro] = useState<Kuroshiro | null>(null);
-  const [transliteratedNames, setTransliteratedNames] = useState<{[key: string]: string}>({});
-  const [kuroshiroLoaded, setKuroshiroLoaded] = useState(false);
 
   const filteredOrders = orders.filter(order => {
     switch (activeTab) {
@@ -51,50 +63,8 @@ export default function Home() {
   });
 
   useEffect(() => {
-    let mounted = true;
-    const init = async () => {
-      try {
-        const kuroshiroInstance = new Kuroshiro();
-        const analyzer = new KuromojiAnalyzer({
-          dictPath: '/dict'
-        });
-        await kuroshiroInstance.init(analyzer);
-        if (mounted) {
-          setKuroshiro(kuroshiroInstance);
-          setKuroshiroLoaded(true);
-        }
-      } catch (error) {
-        console.error('Failed to initialize Kuroshiro:', error);
-      }
-    };
-    
-    init();
     fetchOrders();
-    return () => { mounted = false; };
   }, []);
-
-  useEffect(() => {
-    const translateNames = async () => {
-      if (!kuroshiro || !kuroshiroLoaded) return;
-      
-      for (const order of orders) {
-        if (order.customerName && !transliteratedNames[order.customerName]) {
-          try {
-            const result = await kuroshiro.convert(order.customerName, { 
-              to: 'romaji',
-              mode: 'spaced',
-              romajiSystem: 'hepburn'
-            });
-            setTransliteratedNames(prev => ({ ...prev, [order.customerName]: result }));
-          } catch (error) {
-            console.error('Error transliterating name:', error);
-          }
-        }
-      }
-    };
-
-    translateNames();
-  }, [orders, kuroshiro, kuroshiroLoaded]);
 
   const fetchOrders = async () => {
     try {
@@ -125,7 +95,8 @@ export default function Home() {
       } else {
         toast.error(data.error || 'Failed to fetch orders');
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('Login error:', error);
       toast.error('Failed to fetch orders');
     }
     setLoading(false);
@@ -147,7 +118,8 @@ export default function Home() {
         toast.success(`Order marked as ${!currentStatus ? 'delivered' : 'not delivered'}`);
         fetchOrders();
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('Status update error:', error);
       toast.error('Failed to update order status');
     }
   };
@@ -201,13 +173,7 @@ export default function Home() {
 
         {/* Date Display */}
         <div className="text-right mb-4">
-          <span className="text-sm text-gray-600">
-            {`${new Date().toLocaleDateString('ja-JP', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            })} ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}`}
-          </span>
+          <ClientDate />
         </div>
 
         {/* Orders Grid */}
@@ -281,7 +247,7 @@ export default function Home() {
                       Order ID: {order.orderId}
                     </h3>
                     <div className="flex gap-2">
-                      {order.receiptName && (
+                      {order.receiptName && order.receiptName !== '-' && (
                         <span className="px-3 py-1 bg-red-100 text-red-600 rounded-full text-sm font-bold">
                           Receipt
                         </span>
@@ -332,14 +298,7 @@ export default function Home() {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <span className="text-sm text-gray-500">Customer Name</span>
-                        <p className="text-sm font-medium text-gray-900">
-                          {order.customerName}
-                          {transliteratedNames[order.customerName] && (
-                            <span className="block text-xs text-gray-500">
-                              {transliteratedNames[order.customerName]}
-                            </span>
-                          )}
-                        </p>
+                        <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
                       </div>
                       <div>
                         <span className="text-sm text-gray-500">Phone Number</span>
@@ -355,7 +314,7 @@ export default function Home() {
                         order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
                           ? 'text-red-600 font-bold'
                           : 'text-gray-900'
-                      }`}>¥{order.priceInfo.total.toLocaleString()}</span>
+                      }`}>¥{(order.priceInfo?.total || 0).toLocaleString()}</span>
                     </div>
                   </div>
                 </div>

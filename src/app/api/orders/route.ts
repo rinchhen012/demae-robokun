@@ -12,6 +12,11 @@ export async function GET() {
         id: true,
         orderId: true,
         orderTime: true,
+        deliveryTime: true,
+        paymentMethod: true,
+        visitCount: true,
+        customerName: true,
+        customerPhone: true,
         status: true,
         items: true,
         subtotal: true,
@@ -19,36 +24,20 @@ export async function GET() {
         totalAmount: true,
         isDelivered: true,
         isActive: true,
-        deliveryTime: true,
-        paymentMethod: true,
-        visitCount: true,
-        customerName: true,
-        customerPhone: true
+        receiptName: true,
+        waitingTime: true
       }
     });
 
-    // Transform the data to match the UI expectations
-    const transformedOrders = orders.map(order => ({
-      ...order,
-      deliveryTime: order.deliveryTime,
-      paymentMethod: order.paymentMethod,
-      visitCount: order.visitCount,
-      customerName: order.customerName,
-      customerPhone: order.customerPhone,
-      priceInfo: {
-        subtotal: order.subtotal,
-        deliveryFee: order.deliveryFee,
-        total: order.totalAmount
-      }
-    }));
-
-    return NextResponse.json({ success: true, orders: transformedOrders });
+    return NextResponse.json({ success: true, orders });
   } catch (error) {
     console.error('Database error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to fetch orders from database' },
       { status: 500 }
     );
+  } finally {
+    await prisma.$disconnect();
   }
 }
 
@@ -57,7 +46,6 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { email, password } = body;
 
-    // Validate input
     if (!email || !password) {
       return NextResponse.json(
         { success: false, error: 'Email and password are required' },
@@ -65,74 +53,60 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!email.includes('@')) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid email format' },
-        { status: 400 }
-      );
-    }
-
     const result = await scrapeOrders(email, password);
     
-    if (!result.success) {
+    if (!result.success || !result.orders) {
       return NextResponse.json(
-        { success: false, error: result.error },
+        { success: false, error: result.error || 'Failed to fetch orders' },
         { status: 400 }
       );
     }
 
-    // Update database with new orders
-    try {
-      for (const order of result.orders) {
-        await prisma.order.upsert({
-          where: { orderId: order.orderId },
-          update: {
-            orderTime: new Date(order.orderTime),
-            status: order.status,
-            deliveryTime: order.deliveryTime,
-            paymentMethod: order.paymentMethod,
-            visitCount: order.visitCount,
-            customerName: order.customerName,
-            customerPhone: order.customerPhone,
-            subtotal: order.priceInfo.subtotal,
-            deliveryFee: order.priceInfo.deliveryFee,
-            totalAmount: order.priceInfo.total
-          },
-          create: {
-            orderId: order.orderId,
-            orderTime: new Date(order.orderTime),
-            status: order.status,
-            deliveryTime: order.deliveryTime,
-            paymentMethod: order.paymentMethod,
-            visitCount: order.visitCount,
-            customerName: order.customerName,
-            customerPhone: order.customerPhone,
-            items: '',
-            subtotal: order.priceInfo.subtotal,
-            deliveryFee: order.priceInfo.deliveryFee,
-            totalAmount: order.priceInfo.total
-          },
-        });
-      }
-
-      return NextResponse.json({ 
-        success: true, 
-        orders: result.orders 
+    for (const order of result.orders) {
+      await prisma.order.upsert({
+        where: { orderId: order.orderId },
+        update: {
+          orderTime: new Date(order.orderTime),
+          status: order.status,
+          deliveryTime: order.deliveryTime,
+          paymentMethod: order.paymentMethod,
+          visitCount: order.visitCount,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          subtotal: order.priceInfo.subtotal,
+          deliveryFee: order.priceInfo.deliveryFee,
+          totalAmount: order.priceInfo.total,
+          receiptName: order.receiptName,
+          waitingTime: order.waitingTime
+        },
+        create: {
+          orderId: order.orderId,
+          orderTime: new Date(order.orderTime),
+          status: order.status,
+          deliveryTime: order.deliveryTime,
+          paymentMethod: order.paymentMethod,
+          visitCount: order.visitCount,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          items: '',
+          subtotal: order.priceInfo.subtotal,
+          deliveryFee: order.priceInfo.deliveryFee,
+          totalAmount: order.priceInfo.total,
+          receiptName: order.receiptName,
+          waitingTime: order.waitingTime
+        },
       });
-      
-    } catch (dbError) {
-      console.error('Database error:', dbError);
-      return NextResponse.json(
-        { success: false, error: 'Failed to save orders to database' },
-        { status: 500 }
-      );
     }
+
+    return NextResponse.json({ success: true, orders: result.orders });
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
     );
+  } finally {
+    await prisma.$disconnect();
   }
 }
 
@@ -159,5 +133,7 @@ export async function PUT(request: Request) {
       { success: false, error: 'Failed to update order status' },
       { status: 500 }
     );
+  } finally {
+    await prisma.$disconnect();
   }
 } 
