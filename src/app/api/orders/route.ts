@@ -7,44 +7,24 @@ const prisma = new PrismaClient();
 export async function GET() {
   try {
     const orders = await prisma.order.findMany({
-      orderBy: { orderTime: 'desc' },
-      select: {
-        id: true,
-        orderId: true,
-        orderTime: true,
-        deliveryTime: true,
-        paymentMethod: true,
-        visitCount: true,
-        customerName: true,
-        customerPhone: true,
-        status: true,
-        items: true,
-        subtotal: true,
-        deliveryFee: true,
-        totalAmount: true,
-        isDelivered: true,
-        isActive: true,
-        receiptName: true,
-        waitingTime: true
-      }
+      orderBy: {
+        orderTime: 'desc',
+      },
     });
 
     return NextResponse.json({ success: true, orders });
   } catch (error) {
-    console.error('Database error:', error);
+    console.error('Error fetching orders:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch orders from database' },
+      { success: false, error: 'Failed to fetch orders' },
       { status: 500 }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { email, password } = body;
+    const { email, password } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json(
@@ -54,66 +34,66 @@ export async function POST(request: Request) {
     }
 
     const result = await scrapeOrders(email, password);
-    
-    if (!result.success || !result.orders) {
+
+    if (!result.success) {
       return NextResponse.json(
-        { success: false, error: result.error || 'Failed to fetch orders' },
+        { success: false, error: result.error },
         { status: 400 }
       );
     }
 
+    // Update or create orders in the database
     for (const order of result.orders) {
       await prisma.order.upsert({
         where: { orderId: order.orderId },
         update: {
           orderTime: new Date(order.orderTime),
-          status: order.status,
           deliveryTime: order.deliveryTime,
           paymentMethod: order.paymentMethod,
           visitCount: order.visitCount,
           customerName: order.customerName,
           customerPhone: order.customerPhone,
+          status: order.status,
+          items: '',  // You might want to update this based on your needs
           subtotal: order.priceInfo.subtotal,
           deliveryFee: order.priceInfo.deliveryFee,
           totalAmount: order.priceInfo.total,
           receiptName: order.receiptName,
-          waitingTime: order.waitingTime
+          waitingTime: order.waitingTime,
         },
         create: {
           orderId: order.orderId,
           orderTime: new Date(order.orderTime),
-          status: order.status,
           deliveryTime: order.deliveryTime,
           paymentMethod: order.paymentMethod,
           visitCount: order.visitCount,
           customerName: order.customerName,
           customerPhone: order.customerPhone,
-          items: '',
+          status: order.status,
+          items: '',  // You might want to update this based on your needs
           subtotal: order.priceInfo.subtotal,
           deliveryFee: order.priceInfo.deliveryFee,
           totalAmount: order.priceInfo.total,
           receiptName: order.receiptName,
-          waitingTime: order.waitingTime
+          waitingTime: order.waitingTime,
         },
       });
     }
 
-    return NextResponse.json({ success: true, orders: result.orders });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('API error:', error);
+    console.error('Error processing orders:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: 'Failed to process orders' },
       { status: 500 }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 }
 
 export async function PUT(request: Request) {
   try {
     const { orderId, isDelivered, isActive } = await request.json();
-    
+
     if (!orderId) {
       return NextResponse.json(
         { success: false, error: 'Order ID is required' },
@@ -121,19 +101,20 @@ export async function PUT(request: Request) {
       );
     }
 
-    const order = await prisma.order.update({
+    await prisma.order.update({
       where: { orderId },
-      data: { isDelivered, isActive },
+      data: {
+        isDelivered,
+        isActive,
+      },
     });
-    
-    return NextResponse.json({ success: true, order });
+
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Update error:', error);
+    console.error('Error updating order:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to update order status' },
+      { success: false, error: 'Failed to update order' },
       { status: 500 }
     );
-  } finally {
-    await prisma.$disconnect();
   }
 } 

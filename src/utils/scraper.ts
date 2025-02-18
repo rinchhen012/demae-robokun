@@ -132,8 +132,8 @@ export async function scrapeOrders(email: string, password: string) {
           const priceMatch = priceText.match(/[¥￥]([0-9,]+)/);
           console.log('Price match:', priceMatch);
           
-          const subtotal = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
-          console.log('Parsed subtotal:', subtotal);
+          const total = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
+          console.log('Parsed total:', total);
 
           // For debugging, let's log all dt elements
           const allDts = Array.from(document.querySelectorAll('dt')).map(dt => dt.textContent?.trim());
@@ -150,9 +150,9 @@ export async function scrapeOrders(email: string, password: string) {
             receiptName: findValueByLabel('領収書宛名'),
             waitingTime: findValueByLabel('受付時の待ち時間'),
             priceInfo: {
-              subtotal,
-              deliveryFee: 0,  // We'll only use the total price
-              total: subtotal  // Set total to be the same as subtotal since we only need the total
+              subtotal: 0,  // We don't need subtotal
+              deliveryFee: 0,  // We don't need delivery fee
+              total: total  // Use the total price including tax
             }
           };
 
