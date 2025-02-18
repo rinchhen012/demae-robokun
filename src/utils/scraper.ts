@@ -4,7 +4,7 @@ interface DetailedOrder {
   orderId: string;
   orderTime: string;
   status: string;
-  priceInfo: number;
+  totalAmount: number;
   deliveryTime: string;
   paymentMethod: string;
   visitCount: string;
@@ -149,40 +149,48 @@ export async function scrapeOrders(email: string, password: string) {
           };
 
           // Extract price information
-          const priceText = findValueByLabel('商品代金合計（税込）');
-          console.log('Raw price text:', priceText);
-          
-          // Try to find price in span tag if the direct search didn't work
           let total = 0;
-          if (!priceText || !priceText.match(/[¥￥][0-9,]+/)) {
-            // Look for elements containing the label
-            const elements = document.querySelectorAll('*');
-            for (const el of elements) {
-              if (el.textContent?.includes('商品代金合計（税込）')) {
-                // Find the next sibling div that might contain the price
-                const priceContainer = el.closest('div')?.nextElementSibling;
-                if (priceContainer) {
-                  const priceSpan = priceContainer.querySelector('span');
-                  if (priceSpan) {
-                    const spanText = priceSpan.textContent?.trim() || '';
-                    console.log('Found price in span:', spanText);
-                    const match = spanText.match(/[¥￥]([0-9,]+)/);
-                    if (match) {
-                      total = parseInt(match[1].replace(/,/g, ''));
-                      console.log('Parsed total from span:', total);
-                      break;
-                    }
-                  }
+          
+          // First find the items section
+          const itemsFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
+            el.textContent?.includes('商品情報') || 
+            el.textContent?.includes('注文商品')
+          );
+
+          if (itemsFieldset) {
+            // Get all divs in the fieldset
+            const allDivs = Array.from(itemsFieldset.querySelectorAll('div'));
+            
+            // Look for the last occurrence of '合計'
+            for (let i = allDivs.length - 1; i >= 0; i--) {
+              const div = allDivs[i];
+              const text = div.textContent || '';
+              
+              if (text.includes('合計')) {
+                const match = text.match(/[¥￥]([0-9,]+)/);
+                if (match) {
+                  total = parseInt(match[1].replace(/,/g, ''));
+                  break;
                 }
               }
             }
-          } else {
-            const priceMatch = priceText.match(/[¥￥]([0-9,]+)/);
-            total = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
           }
           
-          console.log('Final total:', total);
-
+          // If still not found, try the old method as fallback
+          if (total === 0) {
+            const elements = document.querySelectorAll('*');
+            for (const el of elements) {
+              if (el.textContent?.includes('合計')) {
+                const text = el.textContent;
+                const match = text.match(/[¥￥]([0-9,]+)/);
+                if (match) {
+                  total = parseInt(match[1].replace(/,/g, ''));
+                  break;
+                }
+              }
+            }
+          }
+          
           // Get items information
           let items = '';
           let hasUtensils = false;
@@ -250,7 +258,7 @@ export async function scrapeOrders(email: string, password: string) {
             waitingTime: findValueByLabel('受付時の待ち時間'),
             address: findValueByLabel('配達先住所'),
             items: items,
-            priceInfo: total,
+            totalAmount: total,
             status
           };
         });

@@ -16,11 +16,6 @@ export async function GET() {
       },
     });
 
-    console.log('Orders from database:', orders.map(order => ({
-      orderId: order.orderId,
-      price: order.priceInfo
-    })));
-
     // Map database fields to frontend fields
     const mappedOrders = orders.map(order => ({
       ...order,
@@ -58,39 +53,22 @@ export async function POST(request: Request) {
       );
     }
 
+    // Clear all existing orders from the database
+    await prisma.order.deleteMany({});
+
     const result = await scrapeOrders(email, password);
 
-    if (!result.success) {
+    if (!result.success || !result.orders) {
       return NextResponse.json(
         { success: false, error: result.error },
         { status: 400 }
       );
     }
 
-    // Update or create orders in the database
+    // Store new orders in the database
     for (const order of result.orders) {
-      console.log('Processing order:', {
-        orderId: order.orderId,
-        price: order.priceInfo
-      });
-      
-      await prisma.order.upsert({
-        where: { orderId: order.orderId },
-        update: {
-          orderTime: new Date(order.orderTime),
-          deliveryTime: order.deliveryTime,
-          paymentMethod: order.paymentMethod,
-          visitCount: order.visitCount,
-          customerName: order.customerName,
-          customerPhone: order.customerPhone,
-          status: order.status,
-          items: order.items || '',
-          priceInfo: order.priceInfo,
-          receiptName: order.receiptName,
-          waitingTime: order.waitingTime,
-          address: order.address,
-        },
-        create: {
+      await prisma.order.create({
+        data: {
           orderId: order.orderId,
           orderTime: new Date(order.orderTime),
           deliveryTime: order.deliveryTime,
@@ -100,20 +78,11 @@ export async function POST(request: Request) {
           customerPhone: order.customerPhone,
           status: order.status,
           items: order.items || '',
-          priceInfo: order.priceInfo,
+          totalAmount: order.totalAmount,
           receiptName: order.receiptName,
           waitingTime: order.waitingTime,
           address: order.address,
         },
-      });
-
-      // Verify the saved data
-      const savedOrder = await prisma.order.findUnique({
-        where: { orderId: order.orderId },
-      });
-      console.log('Saved order:', {
-        orderId: savedOrder?.orderId,
-        price: savedOrder?.priceInfo
       });
     }
 

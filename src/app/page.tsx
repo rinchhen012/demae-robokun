@@ -14,7 +14,7 @@ interface Order {
   customerName: string;
   customerPhone: string;
   waitingTime: string;
-  priceInfo: number;
+  totalAmount: number;
   status: string;
   items: string;
   isDelivered?: boolean;
@@ -63,22 +63,11 @@ export default function Home() {
     fetchOrders();
   }, []);
 
-  // Add logging for orders
-  useEffect(() => {
-    if (orders.length > 0) {
-      console.log('Current orders with prices:');
-      orders.forEach(order => {
-        console.log(`Order ${order.orderId}: ¥${order.priceInfo}`);
-      });
-    }
-  }, [orders]);
-
   const fetchOrders = async () => {
     try {
       const response = await fetch('/api/orders');
       const data = await response.json();
       if (data.success) {
-        console.log('Fetched orders:', data.orders);
         setOrders(data.orders);
       }
     } catch (error) {
@@ -90,6 +79,10 @@ export default function Home() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    
+    // Clear existing orders from UI
+    setOrders([]);
+    
     try {
       const response = await fetch('/api/orders', {
         method: 'POST',
@@ -248,12 +241,12 @@ export default function Home() {
                   order.waitingTime === '-分' && 
                   ((order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') || 
                    (order.receiptName && order.receiptName !== '-'))
-                  ? 'border-2 border-blue-300 outline outline-2 outline-red-300 outline-offset-2'
+                  ? 'border-4 border-blue-300 outline outline-4 outline-red-300 outline-offset-2'
                   : order.waitingTime === '-分' 
-                    ? 'border-2 border-blue-300'
+                    ? 'border-4 border-blue-300'
                     : (order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' || 
                        (order.receiptName && order.receiptName !== '-'))
-                      ? 'border-2 border-red-300'
+                      ? 'border-4 border-red-300'
                       : 'border-2 border-gray-200'
                 }`}
               >
@@ -305,22 +298,37 @@ export default function Home() {
                       <div className="grid grid-cols-2 gap-1">
                         <div>
                           <span className="text-xs text-gray-500">Order Time</span>
-                          <p className="text-sm font-medium text-gray-900">{new Date(order.orderTime).toLocaleString('ja-JP', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false
-                          })}</p>
+                          <p className="text-sm font-medium text-gray-900">
+                            <span>{new Date(order.orderTime).toLocaleString('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit'
+                            })}</span>
+                            <span className="text-base font-bold ml-2">
+                              {new Date(order.orderTime).toLocaleString('ja-JP', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false
+                              })}
+                            </span>
+                          </p>
                         </div>
                         <div>
                           <span className="text-xs text-gray-500">Delivery Time</span>
                           <p className={`text-sm font-medium ${
                             order.waitingTime === '-分'
-                              ? 'text-blue-600 font-bold'
+                              ? 'text-blue-600'
                               : 'text-gray-900'
-                          }`}>{order.deliveryTime.replace(/:\d{2}$/, '')}</p>
+                          }`}>
+                            <span>{order.deliveryTime.split(' ')[0]}</span>
+                            <span className={`text-base font-bold ml-2 ${
+                              order.waitingTime === '-分'
+                                ? 'text-blue-600'
+                                : 'text-gray-900'
+                            }`}>
+                              {order.deliveryTime.split(' ')[1]?.replace(/:\d{2}$/, '')}
+                            </span>
+                          </p>
                         </div>
                         <div>
                           <span className="text-xs text-gray-500">Payment Method</span>
@@ -370,7 +378,7 @@ export default function Home() {
                                 ? 'text-red-600 font-bold'
                                 : 'text-gray-900'
                             }`}>
-                              ¥{(order.priceInfo || 0).toLocaleString()}
+                              ¥{(order.totalAmount || 0).toLocaleString()}
                             </p>
                           </div>
                         </div>
