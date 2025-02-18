@@ -2,21 +2,35 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { scrapeOrders } from '@/utils/scraper';
 
+// Create a single PrismaClient instance and reuse it
 const prisma = new PrismaClient();
 
 export async function GET() {
   try {
+    // Ensure database connection
+    await prisma.$connect();
+
     const orders = await prisma.order.findMany({
       orderBy: {
         orderTime: 'desc',
       },
     });
 
+    // Properly close the connection
+    await prisma.$disconnect();
+
     return NextResponse.json({ success: true, orders });
   } catch (error) {
+    // Ensure connection is closed even if there's an error
+    await prisma.$disconnect();
+    
     console.error('Error fetching orders:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch orders' },
+      { 
+        success: false, 
+        error: 'Failed to fetch orders',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
