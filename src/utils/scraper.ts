@@ -4,11 +4,7 @@ interface DetailedOrder {
   orderId: string;
   orderTime: string;
   status: string;
-  priceInfo: {
-    subtotal: number;
-    deliveryFee: number;
-    total: number;
-  };
+  priceInfo: number;
   deliveryTime: string;
   paymentMethod: string;
   visitCount: string;
@@ -154,8 +150,38 @@ export async function scrapeOrders(email: string, password: string) {
 
           // Extract price information
           const priceText = findValueByLabel('商品代金合計（税込）');
-          const priceMatch = priceText.match(/[¥￥]([0-9,]+)/);
-          const total = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
+          console.log('Raw price text:', priceText);
+          
+          // Try to find price in span tag if the direct search didn't work
+          let total = 0;
+          if (!priceText || !priceText.match(/[¥￥][0-9,]+/)) {
+            // Look for elements containing the label
+            const elements = document.querySelectorAll('*');
+            for (const el of elements) {
+              if (el.textContent?.includes('商品代金合計（税込）')) {
+                // Find the next sibling div that might contain the price
+                const priceContainer = el.closest('div')?.nextElementSibling;
+                if (priceContainer) {
+                  const priceSpan = priceContainer.querySelector('span');
+                  if (priceSpan) {
+                    const spanText = priceSpan.textContent?.trim() || '';
+                    console.log('Found price in span:', spanText);
+                    const match = spanText.match(/[¥￥]([0-9,]+)/);
+                    if (match) {
+                      total = parseInt(match[1].replace(/,/g, ''));
+                      console.log('Parsed total from span:', total);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            const priceMatch = priceText.match(/[¥￥]([0-9,]+)/);
+            total = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
+          }
+          
+          console.log('Final total:', total);
 
           // Get items information
           let items = '';
@@ -224,11 +250,8 @@ export async function scrapeOrders(email: string, password: string) {
             waitingTime: findValueByLabel('受付時の待ち時間'),
             address: findValueByLabel('配達先住所'),
             items: items,
-            priceInfo: {
-              subtotal: 0,
-              deliveryFee: 0,
-              total: total
-            }
+            priceInfo: total,
+            status
           };
         });
 
@@ -239,7 +262,6 @@ export async function scrapeOrders(email: string, password: string) {
 
         detailedOrders.push({
           ...orderDetails,
-          status,
         });
 
         // Go back to the order list

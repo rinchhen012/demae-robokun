@@ -14,11 +14,7 @@ interface Order {
   customerName: string;
   customerPhone: string;
   waitingTime: string;
-  priceInfo: {
-    subtotal: number;
-    deliveryFee: number;
-    total: number;
-  };
+  priceInfo: number;
   status: string;
   items: string;
   isDelivered?: boolean;
@@ -67,11 +63,22 @@ export default function Home() {
     fetchOrders();
   }, []);
 
+  // Add logging for orders
+  useEffect(() => {
+    if (orders.length > 0) {
+      console.log('Current orders with prices:');
+      orders.forEach(order => {
+        console.log(`Order ${order.orderId}: ¥${order.priceInfo}`);
+      });
+    }
+  }, [orders]);
+
   const fetchOrders = async () => {
     try {
       const response = await fetch('/api/orders');
       const data = await response.json();
       if (data.success) {
+        console.log('Fetched orders:', data.orders);
         setOrders(data.orders);
       }
     } catch (error) {
@@ -362,7 +369,9 @@ export default function Home() {
                               order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
                                 ? 'text-red-600 font-bold'
                                 : 'text-gray-900'
-                            }`}>¥{(order.priceInfo?.total || 0).toLocaleString()}</p>
+                            }`}>
+                              ¥{(order.priceInfo || 0).toLocaleString()}
+                            </p>
                           </div>
                         </div>
                       </div>
