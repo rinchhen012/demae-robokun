@@ -19,7 +19,7 @@ A web application for automating order management from Demae-can partner portal.
 
 ## Setup
 
-1. Clone the repository and install dependencies:
+### 1. Clone and Install Dependencies
 
 ```bash
 git clone <repository-url>
@@ -27,22 +27,65 @@ cd demae-robokun
 npm install
 ```
 
-2. Start Composer Agent:
+### 2. Start Composer Agent
 
-```bash
+#### Windows
+
+```powershell
+# Using PowerShell
 docker run -d -p 3001:3001 --name composer-agent ghcr.io/browser-actions/composer-agent
+
+# If container already exists
+docker start composer-agent
 ```
 
-3. Set up the database:
+#### Linux
 
 ```bash
+# Using bash
+sudo docker run -d -p 3001:3001 --name composer-agent ghcr.io/browser-actions/composer-agent
+
+# If container already exists
+sudo docker start composer-agent
+```
+
+### 3. Database Setup
+
+#### Windows
+
+```powershell
+# Remove existing database (if needed)
+Remove-Item -Path prisma/dev.db -ErrorAction SilentlyContinue
+
+# Generate Prisma client and create database
 npx prisma generate
 npx prisma db push
 ```
 
-4. Start the development server:
+#### Linux
 
 ```bash
+# Remove existing database (if needed)
+rm -f prisma/dev.db
+
+# Generate Prisma client and create database
+npx prisma generate
+npx prisma db push
+```
+
+### 4. Start Development Server
+
+#### Windows
+
+```powershell
+# Using PowerShell
+npm run dev -- -H 0.0.0.0
+```
+
+#### Linux
+
+```bash
+# Using bash
 npm run dev -- -H 0.0.0.0
 ```
 
@@ -51,28 +94,46 @@ The application will be available at:
 - Local machine: `http://localhost:3000`
 - Other devices: `http://<your-local-ip-address>:3000`
 
-### Accessing from iPad
+### Accessing from Other Devices
 
-1. **Find your computer's IP address**:
+#### Finding Your IP Address
 
-   - Windows: Open CMD and type `ipconfig` (look for IPv4 Address)
-   - Mac: Open System Settings → Network → Wi-Fi → Details (or type `ifconfig` in terminal)
-   - Example IP might look like: `192.168.1.5`
+##### Windows
 
-2. **Connect your iPad**:
+1. Open PowerShell or Command Prompt
+2. Type `ipconfig`
+3. Look for "IPv4 Address" under your active network adapter
+   ```
+   IPv4 Address. . . . . . . . . . . : 192.168.1.xxx
+   ```
 
-   - Ensure your iPad is connected to the same Wi-Fi network as your computer
-   - Open Safari on your iPad
-   - Enter `http://<your-computer-ip>:3000` in the address bar
-   - Example: `http://192.168.1.5:3000`
+##### Linux
 
-3. **Troubleshooting**:
-   - If connection fails, check your computer's firewall settings
-   - Try temporarily disabling your computer's firewall
-   - Make sure your iPad and computer are on the same Wi-Fi network
-   - Some networks (like public Wi-Fi) might block device-to-device connections
+1. Open terminal
+2. Type `ip addr` or `hostname -I`
+3. Look for your local IP address (usually starts with 192.168 or 10.0)
+   ```
+   inet 192.168.1.xxx/24
+   ```
 
-Note: For security reasons, only use this method on trusted networks.
+#### Accessing from iPad/Tablet
+
+1. Ensure your device is on the same network as your computer
+2. Open your browser
+3. Enter `http://<your-computer-ip>:3000`
+   Example: `http://192.168.1.xxx:3000`
+
+#### Troubleshooting Network Access
+
+1. Check Firewall Settings:
+
+   - Windows: Open Windows Defender Firewall → Allow an app through firewall → Add Node.js and port 3000
+   - Linux: Check UFW settings: `sudo ufw status` and allow port 3000 if needed
+
+2. Network Issues:
+   - Ensure both devices are on the same network
+   - Some networks (public Wi-Fi) may block device-to-device connections
+   - Try temporarily disabling firewall for testing
 
 ## Usage
 
