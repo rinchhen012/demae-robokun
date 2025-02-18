@@ -235,134 +235,153 @@ export default function Home() {
             {filteredOrders.map((order) => (
               <div
                 key={order.orderId}
-                className={`bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 border-2 ${
+                className={`bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 ${
                   order.isDelivered ? 'opacity-85' : ''
                 } ${
-                  order.waitingTime === '-分' ? 'bg-blue-50 border-blue-300' : 'border-gray-200'
-                } ${
-                  order.receiptName && order.receiptName !== '-' ? 'bg-red-50 border-red-300' : ''
-                } ${
-                  (order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') ? 'bg-red-50 border-red-300' : ''
+                  order.waitingTime === '-分' && 
+                  ((order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') || 
+                   (order.receiptName && order.receiptName !== '-'))
+                  ? 'border-2 border-blue-300 outline outline-2 outline-red-300 outline-offset-2'
+                  : order.waitingTime === '-分' 
+                    ? 'border-2 border-blue-300'
+                    : (order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' || 
+                       (order.receiptName && order.receiptName !== '-'))
+                      ? 'border-2 border-red-300'
+                      : 'border-2 border-gray-200'
                 }`}
               >
-                {/* Order Header */}
-                <div className="px-2 py-2 bg-gray-50 border-b border-gray-200">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-base font-medium text-gray-900">
-                      Order ID: {order.orderId}
-                    </h3>
-                    <div className="flex gap-0.5">
-                      {order.waitingTime === '-分' && (
-                        <span className="px-1 py-0.5 bg-blue-100 text-blue-600 rounded-full text-sm font-bold">
-                          Reserved
-                        </span>
-                      )}
-                      {order.items && (
-                        (order.items.includes('箸、スプーン、おしぼり等／Utensils') ||
-                         order.items.includes('箸、スプーン、おしぼり等') ||
-                         order.items.includes('Utensils')) && (
-                          <span className="px-1 py-0.5 bg-green-100 text-green-600 rounded-full text-sm font-bold">
-                            Utensils
-                          </span>
-                        )
-                      )}
-                      {order.receiptName && order.receiptName !== '-' && (
-                        <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
-                          Receipt
-                        </span>
-                      )}
-                      {(order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') && (
-                        <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
-                          Cash
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Order Details */}
-                <div className="px-2 py-2 space-y-2">
-                  <div className="grid grid-cols-2 gap-1">
-                    <div>
-                      <span className="text-xs text-gray-500">Order Time</span>
-                      <p className="text-sm font-medium text-gray-900">{new Date(order.orderTime).toLocaleString('ja-JP', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false
-                      })}</p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-gray-500">Delivery Time</span>
-                      <p className="text-sm font-medium text-gray-900">{order.deliveryTime.replace(/:\d{2}$/, '')}</p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-gray-500">Payment Method</span>
-                      <p className={`text-sm font-medium ${
-                        order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
-                          ? 'text-red-600 font-bold'
-                          : 'text-gray-900'
-                      }`}>
-                        {order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' 
-                          ? 'Cash'
-                          : order.paymentMethod === 'カード払い（注文時に決済）'
-                            ? 'Credit Card'
-                            : order.paymentMethod === 'Ａｍａｚｏｎ　Ｐａｙ（注文時に決済）'
-                              ? 'Amazon Pay'
-                              : order.paymentMethod}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-gray-500">Visit Count</span>
-                      <p className="text-sm font-medium text-gray-900">{order.visitCount}</p>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-gray-200 pt-2">
-                    <div className="grid grid-cols-2 gap-1">
-                      <div>
-                        <span className="text-xs text-gray-500">Customer Name</span>
-                        <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-gray-500">Phone Number</span>
-                        <p className="text-sm font-medium text-gray-900">{order.customerPhone}</p>
+                <div className="h-full">
+                  <div className={`h-full bg-white rounded-lg ${
+                    order.waitingTime === '-分' && 
+                    ((order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') || 
+                     (order.receiptName && order.receiptName !== '-'))
+                    ? 'm-[1px]'
+                    : ''
+                  }`}>
+                    {/* Order Header */}
+                    <div className="px-2 py-2 bg-gray-50 border-b border-gray-200">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-base font-medium text-gray-900">
+                          Order ID: {order.orderId}
+                        </h3>
+                        <div className="flex gap-0.5">
+                          {order.waitingTime === '-分' && (
+                            <span className="px-1 py-0.5 bg-blue-100 text-blue-600 rounded-full text-sm font-bold">
+                              Reserved
+                            </span>
+                          )}
+                          {order.items && (
+                            (order.items.includes('箸、スプーン、おしぼり等／Utensils') ||
+                             order.items.includes('箸、スプーン、おしぼり等') ||
+                             order.items.includes('Utensils')) && (
+                              <span className="px-1 py-0.5 bg-green-100 text-green-600 rounded-full text-sm font-bold">
+                                Utensils
+                              </span>
+                            )
+                          )}
+                          {order.receiptName && order.receiptName !== '-' && (
+                            <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
+                              Receipt
+                            </span>
+                          )}
+                          {(order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') && (
+                            <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
+                              Cash
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="mt-1">
-                      <span className="text-xs text-gray-500">Address</span>
-                      <p className="text-sm font-medium text-gray-900">{order.address}</p>
-                    </div>
-                  </div>
 
-                  <div className="border-t border-gray-200 pt-1">
-                    <div className="grid grid-cols-2 gap-0.5">
-                      <div>
-                        <span className="text-xs text-gray-500">Total Amount (Tax Incl.)</span>
-                        <p className={`text-xs font-medium ${
-                          order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
-                            ? 'text-red-600 font-bold'
-                            : 'text-gray-900'
-                        }`}>¥{(order.priceInfo?.total || 0).toLocaleString()}</p>
+                    {/* Order Details */}
+                    <div className="px-2 py-2 space-y-2">
+                      <div className="grid grid-cols-2 gap-1">
+                        <div>
+                          <span className="text-xs text-gray-500">Order Time</span>
+                          <p className="text-sm font-medium text-gray-900">{new Date(order.orderTime).toLocaleString('ja-JP', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false
+                          })}</p>
+                        </div>
+                        <div>
+                          <span className="text-xs text-gray-500">Delivery Time</span>
+                          <p className={`text-sm font-medium ${
+                            order.waitingTime === '-分'
+                              ? 'text-blue-600 font-bold'
+                              : 'text-gray-900'
+                          }`}>{order.deliveryTime.replace(/:\d{2}$/, '')}</p>
+                        </div>
+                        <div>
+                          <span className="text-xs text-gray-500">Payment Method</span>
+                          <p className={`text-sm font-medium ${
+                            order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
+                              ? 'text-red-600 font-bold'
+                              : 'text-gray-900'
+                          }`}>
+                            {order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' 
+                              ? 'Cash'
+                              : order.paymentMethod === 'カード払い（注文時に決済）'
+                                ? 'Credit Card'
+                                : order.paymentMethod === 'Ａｍａｚｏｎ　Ｐａｙ（注文時に決済）'
+                                  ? 'Amazon Pay'
+                                  : order.paymentMethod}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-xs text-gray-500">Visit Count</span>
+                          <p className="text-sm font-medium text-gray-900">{order.visitCount}</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-200 pt-2">
+                        <div className="grid grid-cols-2 gap-1">
+                          <div>
+                            <span className="text-xs text-gray-500">Customer Name</span>
+                            <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
+                          </div>
+                          <div>
+                            <span className="text-xs text-gray-500">Phone Number</span>
+                            <p className="text-sm font-medium text-gray-900">{order.customerPhone}</p>
+                          </div>
+                        </div>
+                        <div className="mt-1">
+                          <span className="text-xs text-gray-500">Address</span>
+                          <p className="text-sm font-medium text-gray-900">{order.address}</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-gray-200 pt-1">
+                        <div className="grid grid-cols-2 gap-0.5">
+                          <div>
+                            <span className="text-xs text-gray-500">Total Amount (Tax Incl.)</span>
+                            <p className={`text-xs font-medium ${
+                              order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
+                                ? 'text-red-600 font-bold'
+                                : 'text-gray-900'
+                            }`}>¥{(order.priceInfo?.total || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* Actions */}
-                <div className="px-2 py-2 bg-gray-50 border-t border-gray-200">
-                  <button
-                    onClick={() => toggleDeliveryStatus(order.orderId, order.isDelivered || false)}
-                    className={`w-full inline-flex justify-center items-center px-2 py-1.5 rounded-md text-sm font-medium text-white shadow-sm transition-colors duration-200 ${
-                      order.isDelivered 
-                        ? 'bg-blue-600 hover:bg-blue-700' 
-                        : 'bg-green-600 hover:bg-green-700'
-                    }`}
-                  >
-                    {order.isDelivered ? 'Not Delivered' : 'Delivered'}
-                  </button>
+                    {/* Actions */}
+                    <div className="px-2 py-2 bg-gray-50 border-t border-gray-200">
+                      <button
+                        onClick={() => toggleDeliveryStatus(order.orderId, order.isDelivered || false)}
+                        className={`w-full inline-flex justify-center items-center px-2 py-1.5 rounded-md text-sm font-medium text-white shadow-sm transition-colors duration-200 ${
+                          order.isDelivered 
+                            ? 'bg-blue-600 hover:bg-blue-700' 
+                            : 'bg-green-600 hover:bg-green-700'
+                        }`}
+                      >
+                        {order.isDelivered ? 'Not Delivered' : 'Delivered'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ))}
