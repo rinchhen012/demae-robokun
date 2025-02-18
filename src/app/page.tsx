@@ -395,7 +395,9 @@ export default function Home() {
                             : 'bg-green-600 hover:bg-green-700'
                         }`}
                       >
-                        {order.isDelivered ? 'Not Delivered' : 'Delivered'}
+                        {order.isDelivered 
+                          ? (activeTab === 'delivered' ? 'Send Back' : 'Not Delivered')
+                          : 'Delivered'}
                       </button>
                     </div>
                   </div>
