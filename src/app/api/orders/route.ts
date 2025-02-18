@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { scrapeOrders } from '@/utils/scraper';
+import { scrapeOrders, startOrderMonitoring, stopOrderMonitoring } from '@/utils/scraper';
 
 // Create a single PrismaClient instance and reuse it
 const prisma = new PrismaClient();
@@ -44,7 +44,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json();
+    const { email, password, startMonitoring } = await request.json();
 
     if (!email || !password) {
       return NextResponse.json(
@@ -53,9 +53,53 @@ export async function POST(request: Request) {
       );
     }
 
-    // Clear all existing orders from the database
-    await prisma.order.deleteMany({});
+    // If monitoring is requested
+    if (startMonitoring) {
+      // Clear existing orders first
+      await prisma.order.deleteMany({});
+      
+      try {
+        const result = await startOrderMonitoring(email, password, async (newOrders) => {
+          try {
+            // Store new orders in the database
+            for (const order of newOrders) {
+              await prisma.order.create({
+                data: {
+                  orderId: order.orderId,
+                  orderTime: new Date(order.orderTime),
+                  deliveryTime: order.deliveryTime,
+                  paymentMethod: order.paymentMethod,
+                  visitCount: order.visitCount,
+                  customerName: order.customerName,
+                  customerPhone: order.customerPhone,
+                  status: order.status,
+                  items: order.items || '',
+                  totalAmount: order.totalAmount,
+                  receiptName: order.receiptName,
+                  waitingTime: order.waitingTime,
+                  address: order.address,
+                },
+              });
+            }
+          } catch (error) {
+            console.error('Error storing new orders:', error);
+          }
+        });
+        return NextResponse.json({ 
+          success: true, 
+          monitoring: true,
+          existing: result.existing 
+        });
+      } catch (error) {
+        return NextResponse.json(
+          { success: false, error: 'Failed to start monitoring' },
+          { status: 500 }
+        );
+      }
+    }
 
+    // Regular order fetching logic (when startMonitoring is false)
+    await prisma.order.deleteMany({});
     const result = await scrapeOrders(email, password);
 
     if (!result.success || !result.orders) {
@@ -120,6 +164,20 @@ export async function PUT(request: Request) {
     console.error('Error updating order:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to update order' },
+      { status: 500 }
+    );
+  }
+}
+
+// Add new endpoint to stop monitoring
+export async function DELETE(request: Request) {
+  try {
+    await stopOrderMonitoring();
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error stopping monitoring:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to stop monitoring' },
       { status: 500 }
     );
   }

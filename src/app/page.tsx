@@ -47,6 +47,7 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
+  const [monitoring, setMonitoring] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
   const [storeName, setStoreName] = useState('');
 
@@ -112,25 +113,60 @@ export default function Home() {
     
     // Clear existing orders from UI
     setOrders([]);
+    setStoreName('');
     
     try {
+      // Single request to start monitoring
       const response = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ 
+          email, 
+          password,
+          startMonitoring: true
+        }),
       });
+
       const data = await response.json();
       if (data.success) {
-        toast.success('Orders fetched successfully');
-        fetchOrders();
+        if (data.monitoring) {
+          setMonitoring(true);
+          if (data.existing) {
+            toast.success('Focused existing monitoring window');
+          } else {
+            toast.success('Started monitoring for new orders');
+          }
+          // Fetch initial orders after monitoring starts
+          fetchOrders();
+        }
       } else {
         toast.error(data.error || 'Failed to fetch orders');
+        setMonitoring(false);
       }
     } catch (error: unknown) {
       console.error('Login error:', error);
       toast.error('Failed to fetch orders');
+      setMonitoring(false);
     }
     setLoading(false);
+  };
+
+  const handleStopMonitoring = async () => {
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (data.success) {
+        setMonitoring(false);
+        toast.success('Stopped monitoring for new orders');
+      } else {
+        toast.error('Failed to stop monitoring');
+      }
+    } catch (error) {
+      console.error('Error stopping monitoring:', error);
+      toast.error('Failed to stop monitoring');
+    }
   };
 
   const toggleDeliveryStatus = async (orderId: string, currentStatus: boolean) => {
@@ -177,8 +213,9 @@ export default function Home() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter email"
-                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400"
+                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                 required
+                disabled={monitoring || loading}
               />
             </div>
             <div className="w-64">
@@ -188,17 +225,29 @@ export default function Home() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400"
+                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                 required
+                disabled={monitoring || loading}
               />
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-            >
-              {loading ? 'Fetching...' : 'Fetch Orders'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {loading ? 'Monitoring...' : monitoring ? 'Focus Monitoring Window' : 'Start Monitoring'}
+              </button>
+              {(monitoring || loading) && (
+                <button
+                  type="button"
+                  onClick={handleStopMonitoring}
+                  className="px-4 py-1.5 text-sm bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                >
+                  Stop Monitoring
+                </button>
+              )}
+            </div>
           </form>
         </div>
 
