@@ -48,14 +48,31 @@ export async function scrapeOrders(email: string, password: string) {
       await page.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
         waitUntil: 'networkidle'
       });
-      await page.waitForSelector('.Table_table__RdwIW', { 
-        state: 'visible', 
-        timeout: 15000 
-      });
+      
+      // Wait for either the table or the no-orders message
+      try {
+        await Promise.race([
+          page.waitForSelector('.Table_table__RdwIW', { timeout: 5000 }),
+          page.waitForSelector('text=/注文がありません|No orders found/', { timeout: 5000 })
+        ]);
+      } catch {
+        // If neither is found after timeout, throw error
+        throw new Error('No orders');
+      }
     }
 
     // Initial navigation to orders page
     await goToOrderList();
+    
+    // Check if there are any orders
+    const hasOrders = await page.$('.Table_table__RdwIW');
+    if (!hasOrders) {
+      await browser.close();
+      return { 
+        success: true, 
+        orders: [] 
+      };
+    }
     
     // Get all rows and their data
     const orderRows = await page.evaluate(() => {

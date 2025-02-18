@@ -20,6 +20,7 @@ interface Order {
   isDelivered?: boolean;
   isActive?: boolean;
   address: string;
+  notes?: string;
 }
 
 // Add ClientDate component
@@ -47,6 +48,7 @@ export default function Home() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
+  const [storeName, setStoreName] = useState('');
 
   const filteredOrders = orders.filter(order => {
     switch (activeTab) {
@@ -68,11 +70,39 @@ export default function Home() {
       const response = await fetch('/api/orders');
       const data = await response.json();
       if (data.success) {
-        setOrders(data.orders);
+        // Handle case when there are no orders
+        if (!data.orders || data.orders.length === 0) {
+          setOrders([]);
+          setStoreName('');
+          return;
+        }
+
+        // Process orders to extract notes
+        const processedOrders = data.orders.map((order: Order) => {
+          const notesMatch = order.items?.match(/備考：(.+?)(?:\n|$)/);
+          return {
+            ...order,
+            notes: notesMatch ? notesMatch[1].trim() : ''
+          };
+        });
+        setOrders(processedOrders);
+        // Extract store name from the first order's items if available
+        if (processedOrders.length > 0 && processedOrders[0].items) {
+          const items = processedOrders[0].items;
+          const storeMatch = items.match(/店舗：(.+?)(?:\n|$)/);
+          if (storeMatch) {
+            setStoreName(storeMatch[1].trim());
+          }
+        }
+      } else {
+        setOrders([]);
+        setStoreName('');
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
       toast.error('Failed to fetch orders');
+      setOrders([]);
+      setStoreName('');
     }
   };
 
@@ -171,6 +201,13 @@ export default function Home() {
             </button>
           </form>
         </div>
+
+        {/* Store Name Display */}
+        {storeName && (
+          <div className="text-center mb-6">
+            <h2 className="text-xl font-bold text-gray-900">{storeName}</h2>
+          </div>
+        )}
 
         {/* Date Display */}
         <div className="text-right mb-4">
@@ -279,6 +316,11 @@ export default function Home() {
                               </span>
                             )
                           )}
+                          {order.notes && /lassi|lissa|lassy/i.test(order.notes) && (
+                            <span className="px-1 py-0.5 bg-yellow-100 text-yellow-600 rounded-full text-sm font-bold">
+                              Lassi
+                            </span>
+                          )}
                           {order.receiptName && order.receiptName !== '-' && (
                             <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
                               Receipt
@@ -369,6 +411,14 @@ export default function Home() {
                         </div>
                       </div>
 
+                      {/* Notes Section */}
+                      {order.notes && (
+                        <div className="border-t border-gray-200 pt-1">
+                          <span className="text-xs text-gray-500">Notes</span>
+                          <p className="text-sm font-medium text-gray-900 break-words">{order.notes}</p>
+                        </div>
+                      )}
+
                       <div className="border-t border-gray-200 pt-1">
                         <div className="grid grid-cols-2 gap-0.5">
                           <div>
@@ -383,6 +433,7 @@ export default function Home() {
                           </div>
                         </div>
                       </div>
+
                     </div>
 
                     {/* Actions */}
