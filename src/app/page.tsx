@@ -23,6 +23,7 @@ interface Order {
   items: string;
   isDelivered?: boolean;
   isActive?: boolean;
+  address: string;
 }
 
 // Add ClientDate component
@@ -146,7 +147,7 @@ export default function Home() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter email"
-                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder-gray-400"
+                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400"
                 required
               />
             </div>
@@ -157,7 +158,7 @@ export default function Home() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder-gray-400"
+                className="w-full px-2 py-1.5 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400"
                 required
               />
             </div>
@@ -234,10 +235,10 @@ export default function Home() {
             {filteredOrders.map((order) => (
               <div
                 key={order.orderId}
-                className={`bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 border-2 border-gray-200 ${
+                className={`bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 border-2 ${
                   order.isDelivered ? 'opacity-85' : ''
                 } ${
-                  order.waitingTime === '-分' ? 'bg-blue-50' : ''
+                  order.waitingTime === '-分' ? 'bg-blue-50 border-blue-300' : 'border-gray-200'
                 } ${
                   order.receiptName && order.receiptName !== '-' ? 'bg-red-50 border-red-300' : ''
                 } ${
@@ -251,6 +252,11 @@ export default function Home() {
                       Order ID: {order.orderId}
                     </h3>
                     <div className="flex gap-0.5">
+                      {order.waitingTime === '-分' && (
+                        <span className="px-1 py-0.5 bg-blue-100 text-blue-600 rounded-full text-sm font-bold">
+                          Reserved
+                        </span>
+                      )}
                       {order.receiptName && order.receiptName !== '-' && (
                         <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
                           Receipt
@@ -315,6 +321,10 @@ export default function Home() {
                         <span className="text-xs text-gray-500">Phone Number</span>
                         <p className="text-sm font-medium text-gray-900">{order.customerPhone}</p>
                       </div>
+                    </div>
+                    <div className="mt-1">
+                      <span className="text-xs text-gray-500">Address</span>
+                      <p className="text-sm font-medium text-gray-900">{order.address}</p>
                     </div>
                   </div>
 

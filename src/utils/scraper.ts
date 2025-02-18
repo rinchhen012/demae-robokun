@@ -16,6 +16,7 @@ interface DetailedOrder {
   customerPhone: string;
   receiptName: string;
   waitingTime: string;
+  address: string;
 }
 
 export async function scrapeOrders(email: string, password: string) {
@@ -149,10 +150,11 @@ export async function scrapeOrders(email: string, password: string) {
             customerPhone: findValueByLabel('注文者電話番号'),
             receiptName: findValueByLabel('領収書宛名'),
             waitingTime: findValueByLabel('受付時の待ち時間'),
+            address: findValueByLabel('配達先住所'),
             priceInfo: {
-              subtotal: 0,  // We don't need subtotal
-              deliveryFee: 0,  // We don't need delivery fee
-              total: total  // Use the total price including tax
+              subtotal: 0,
+              deliveryFee: 0,
+              total: total
             }
           };
 

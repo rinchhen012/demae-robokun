@@ -60,6 +60,7 @@ export async function POST(request: Request) {
           totalAmount: order.priceInfo.total,
           receiptName: order.receiptName,
           waitingTime: order.waitingTime,
+          address: order.address,
         },
         create: {
           orderId: order.orderId,
@@ -76,6 +77,7 @@ export async function POST(request: Request) {
           totalAmount: order.priceInfo.total,
           receiptName: order.receiptName,
           waitingTime: order.waitingTime,
+          address: order.address,
         },
       });
     }
