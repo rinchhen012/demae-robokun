@@ -1,3 +1,9 @@
+  ___  ___  ___  ___  _  ___   _ _  _ 
+ | _ \/ _ \| _ )/ _ \| |/ / | | | \| |
+ |   / (_) | _ \ (_) | ' <| |_| | .` |
+ |_|_\\___/|___/\___/|_|\_\\___/|_|\_|
+                                      
+                                      
 # Demae Robokun
 
 A web application for automating order management from Demae-can partner portal.
