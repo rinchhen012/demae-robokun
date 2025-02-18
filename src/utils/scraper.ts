@@ -363,17 +363,44 @@ export async function stopOrderMonitoring() {
   isMonitoringActive = false;
   
   try {
-    if (monitoringPage && !monitoringPage.isClosed()) {
-      await monitoringPage.close().catch(() => {});
+    // First try to close the page if it exists and is not already closed
+    if (monitoringPage) {
+      try {
+        if (!monitoringPage.isClosed()) {
+          await monitoringPage.close();
+        }
+      } catch (error) {
+        console.error('Error closing page:', error);
+      }
+      monitoringPage = null;
     }
+
+    // Then try to close the browser if it exists
     if (monitoringBrowser) {
-      await monitoringBrowser.close().catch(() => {});
+      try {
+        // Get all browser contexts
+        const contexts = monitoringBrowser.contexts();
+        // Close each context
+        for (const context of contexts) {
+          try {
+            await context.close();
+          } catch (error) {
+            console.error('Error closing context:', error);
+          }
+        }
+        // Finally close the browser
+        await monitoringBrowser.close();
+      } catch (error) {
+        console.error('Error closing browser:', error);
+      }
+      monitoringBrowser = null;
     }
-  } catch (error: unknown) {
-    console.error('Error while stopping monitoring:', error);
+  } catch (error) {
+    console.error('Error in stopOrderMonitoring:', error);
   } finally {
-    monitoringBrowser = null;
+    // Ensure these are set to null even if there were errors
     monitoringPage = null;
+    monitoringBrowser = null;
   }
 }
 
