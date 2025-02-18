@@ -99,23 +99,6 @@ export async function scrapeOrders(email: string, password: string) {
 
         // Get order details
         const orderDetails = await page.evaluate(() => {
-          // Log all text content from the page for debugging
-          const allText = Array.from(document.querySelectorAll('*'))
-            .map(el => el.textContent?.trim())
-            .filter(text => text && text.length > 0);
-          console.log('All text content on page:', allText);
-
-          // Specifically look for elements containing "Utensils" or "箸"
-          const utensilElements = Array.from(document.querySelectorAll('*'))
-            .filter(el => el.textContent?.includes('Utensils') || el.textContent?.includes('箸'));
-          console.log('Elements containing utensils:', utensilElements.map(el => el.textContent));
-
-          // Try to find the specific table containing order items
-          const orderTable = document.querySelector('table.orderItemList');
-          if (orderTable) {
-            console.log('Order items table found:', orderTable.textContent);
-          }
-
           const findValueByLabel = (labelText: string): string => {
             // Try finding in dl/dt/dd structure
             const dlElements = document.querySelectorAll('dl');
@@ -123,9 +106,7 @@ export async function scrapeOrders(email: string, password: string) {
               const dt = dl.querySelector('dt');
               const dd = dl.querySelector('dd');
               if (dt?.textContent?.includes(labelText) && dd) {
-                const value = dd.textContent?.trim() || '';
-                console.log(`Found ${labelText}:`, value);
-                return value;
+                return dd.textContent?.trim() || '';
               }
             }
 
@@ -139,9 +120,7 @@ export async function scrapeOrders(email: string, password: string) {
                   if (cell.textContent?.includes(labelText)) {
                     const nextCell = cell.nextElementSibling;
                     if (nextCell) {
-                      const value = nextCell.textContent?.trim() || '';
-                      console.log(`Found ${labelText} in table:`, value);
-                      return value;
+                      return nextCell.textContent?.trim() || '';
                     }
                   }
                 }
@@ -154,9 +133,7 @@ export async function scrapeOrders(email: string, password: string) {
               if (dt.textContent?.includes(labelText)) {
                 const nextElement = dt.nextElementSibling;
                 if (nextElement?.tagName.toLowerCase() === 'dd') {
-                  const value = nextElement.textContent?.trim() || '';
-                  console.log(`Found ${labelText} (in dt/dd):`, value);
-                  return value;
+                  return nextElement.textContent?.trim() || '';
                 }
               }
             }
@@ -167,33 +144,20 @@ export async function scrapeOrders(email: string, password: string) {
               if (element.textContent?.includes(labelText)) {
                 const parent = element.parentElement;
                 if (parent) {
-                  const value = parent.textContent?.replace(labelText, '').trim() || '';
-                  console.log(`Found ${labelText} in general element:`, value);
-                  return value;
+                  return parent.textContent?.replace(labelText, '').trim() || '';
                 }
               }
             }
 
-            console.log(`Could not find ${labelText}`);
             return '';
           };
 
-          // Extract price information with logging
+          // Extract price information
           const priceText = findValueByLabel('商品代金合計（税込）');
-          console.log('Raw price text:', priceText);
-          
-          // More flexible price matching
           const priceMatch = priceText.match(/[¥￥]([0-9,]+)/);
-          console.log('Price match:', priceMatch);
-          
           const total = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;
-          console.log('Parsed total:', total);
 
-          // For debugging, let's log all dt elements
-          const allDts = Array.from(document.querySelectorAll('dt')).map(dt => dt.textContent?.trim());
-          console.log('All dt elements:', allDts);
-
-          // Get items information with more specific selectors and logging
+          // Get items information
           let items = '';
           let hasUtensils = false;
           
@@ -205,7 +169,6 @@ export async function scrapeOrders(email: string, password: string) {
                 tableText.includes('箸、スプーン、おしぼり等') ||
                 tableText.includes('Utensils')) {
               hasUtensils = true;
-              console.log('Found utensils in order items table:', tableText);
             }
           }
 
@@ -218,7 +181,6 @@ export async function scrapeOrders(email: string, password: string) {
                   text.includes('箸、スプーン、おしぼり等') ||
                   text.includes('Utensils')) {
                 hasUtensils = true;
-                console.log('Found utensils text in element:', text);
                 break;
               }
             }
@@ -237,7 +199,6 @@ export async function scrapeOrders(email: string, password: string) {
               items = container.textContent || '';
               // Clean up the text
               items = items.replace('商品情報', '').replace('注文商品', '').trim();
-              console.log('Found items section:', items);
             }
           }
 
@@ -251,11 +212,7 @@ export async function scrapeOrders(email: string, password: string) {
             items = items + ' 箸、スプーン、おしぼり等／Utensils';
           }
 
-          console.log('Final items information:', items);
-          console.log('Has utensils?', hasUtensils);
-          console.log('Raw items text:', items);
-
-          const details = {
+          return {
             orderId: findValueByLabel('注文ID'),
             orderTime: findValueByLabel('注文日時'),
             deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
@@ -273,13 +230,9 @@ export async function scrapeOrders(email: string, password: string) {
               total: total
             }
           };
-
-          console.log('Extracted order details:', details);
-          return details;
         });
 
         if (!orderDetails.orderId || orderDetails.orderId === '-') {
-          console.log('Invalid or missing order ID, skipping...');
           await goToOrderList();
           continue;
         }

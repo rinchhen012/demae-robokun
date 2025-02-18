@@ -258,7 +258,6 @@ export default function Home() {
                         </span>
                       )}
                       {order.items && (
-                        console.log('Checking items for utensils:', order.items),
                         (order.items.includes('箸、スプーン、おしぼり等／Utensils') ||
                          order.items.includes('箸、スプーン、おしぼり等') ||
                          order.items.includes('Utensils')) && (
