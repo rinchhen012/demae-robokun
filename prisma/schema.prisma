@@ -26,4 +26,5 @@ model Order {
   receiptName   String?
   waitingTime   String?
   address       String   @default("")
+  notes         String?  @default("")
 } 

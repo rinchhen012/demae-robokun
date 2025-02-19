@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast, { Toaster } from 'react-hot-toast';
 
 interface Order {
@@ -20,7 +20,7 @@ interface Order {
   isDelivered?: boolean;
   isActive?: boolean;
   address: string;
-  notes?: string;
+  notes: string;
 }
 
 // Add ClientDate component
@@ -46,10 +46,305 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [monitoring, setMonitoring] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
   const [storeName, setStoreName] = useState('');
+  const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
+
+  // Function to force a re-render
+  const forceUpdate = useCallback(() => {
+    setLastUpdate(prev => prev + 1);
+  }, []);
+
+  // Function to update orders state
+  const updateOrders = useCallback((newOrders: Order[]) => {
+    setOrders(newOrders);
+    forceUpdate();
+    // Force React to re-render by triggering a state update
+    requestAnimationFrame(() => {
+      setLastUpdate(Date.now());
+    });
+  }, [forceUpdate]);
+
+  // Fetch orders function with state updates
+  const fetchOrders = useCallback(async () => {
+    if (!monitoring) return;
+
+    try {
+      const response = await fetch('/api/orders', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch orders');
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        if (!data.orders || data.orders.length === 0) {
+          console.log('No orders found');
+          updateOrders([]);
+          setStoreName('');
+          return;
+        }
+
+        console.log('Received orders with notes:', data.orders.map((o: Order) => ({ orderId: o.orderId, notes: o.notes })));
+
+        const sortedOrders = data.orders.map((order: Order) => ({
+          ...order,
+          notes: (!order.notes || !order.notes.trim() || order.notes === '-' || /^[{<!]/.test(order.notes)) ? '-' : order.notes
+        })).sort((a: Order, b: Order) => {
+          return new Date(b.orderTime).getTime() - new Date(a.orderTime).getTime();
+        });
+
+        console.log('Sorted orders with notes:', sortedOrders.map((o: Order) => ({ orderId: o.orderId, notes: o.notes })));
+
+        // Update orders with the new state
+        updateOrders(sortedOrders);
+
+        if (sortedOrders.length > 0 && sortedOrders[0].items) {
+          const items = sortedOrders[0].items;
+          const storeMatch = items.match(/店舗：(.+?)(?:\n|$)/);
+          if (storeMatch) {
+            setStoreName(storeMatch[1].trim());
+          }
+        }
+      } else {
+        console.log('Failed to fetch orders:', data.error);
+        updateOrders([]);
+        setStoreName('');
+      }
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      toast.error('Failed to fetch orders');
+      updateOrders([]);
+      setStoreName('');
+    }
+  }, [monitoring, updateOrders]);
+
+  // Check monitoring status from backend
+  const checkMonitoringStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/orders?checkMonitoring=true', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to check monitoring status');
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        const newMonitoringState = data.monitoring;
+        if (newMonitoringState !== monitoring) {
+          setMonitoring(newMonitoringState);
+          if (!newMonitoringState) {
+            updateOrders([]);
+            setStoreName('');
+          }
+          forceUpdate();
+        }
+        setLoading(false);
+        
+        if (!newMonitoringState) {
+          localStorage.removeItem('isMonitoring');
+          localStorage.removeItem('monitoringEmail');
+          localStorage.removeItem('monitoringPassword');
+          setEmail('');
+          setPassword('');
+        } else {
+          localStorage.setItem('isMonitoring', 'true');
+          const savedEmail = localStorage.getItem('monitoringEmail');
+          const savedPassword = localStorage.getItem('monitoringPassword');
+          if (savedEmail && savedPassword) {
+            setEmail(savedEmail);
+            setPassword(savedPassword);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking monitoring status:', error);
+      setLoading(false);
+      setMonitoring(false);
+      updateOrders([]);
+      localStorage.removeItem('isMonitoring');
+      localStorage.removeItem('monitoringEmail');
+      localStorage.removeItem('monitoringPassword');
+      forceUpdate();
+    }
+  }, [monitoring, forceUpdate, updateOrders]);
+
+  // Initial setup effect
+  useEffect(() => {
+    const initialize = async () => {
+      await checkMonitoringStatus();
+      if (monitoring) {
+        await fetchOrders();
+      }
+    };
+    initialize();
+  }, [checkMonitoringStatus, fetchOrders, monitoring]);
+
+  // Set up polling intervals
+  useEffect(() => {
+    let monitoringInterval: NodeJS.Timeout;
+    let fetchInterval: NodeJS.Timeout;
+
+    if (monitoring) {
+      // Set up intervals for both monitoring and fetching
+      monitoringInterval = setInterval(checkMonitoringStatus, 5000);
+      fetchInterval = setInterval(fetchOrders, 2000);
+    }
+
+    return () => {
+      if (monitoringInterval) clearInterval(monitoringInterval);
+      if (fetchInterval) clearInterval(fetchInterval);
+    };
+  }, [monitoring, checkMonitoringStatus, fetchOrders]);
+
+  const handleLogin = async (e: React.FormEvent | null, isReconnecting = false) => {
+    if (e) {
+    e.preventDefault();
+    }
+
+    if (!email || !password) {
+      toast.error('Email and password are required');
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        },
+        body: JSON.stringify({ 
+          email, 
+          password,
+          startMonitoring: true
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setMonitoring(true);
+        setLoading(false);
+        forceUpdate();
+        
+        localStorage.setItem('isMonitoring', 'true');
+        localStorage.setItem('monitoringEmail', email);
+        localStorage.setItem('monitoringPassword', password);
+        
+        if (data.existing) {
+          toast.success('Focused existing monitoring window');
+        } else {
+          toast.success('Started monitoring for new orders');
+        }
+        
+        // Fetch initial orders after monitoring starts
+        await fetchOrders();
+      } else {
+        setMonitoring(false);
+        setLoading(false);
+        localStorage.removeItem('isMonitoring');
+        localStorage.removeItem('monitoringEmail');
+        localStorage.removeItem('monitoringPassword');
+        toast.error(data.error || 'Failed to start monitoring');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      setMonitoring(false);
+      setLoading(false);
+      localStorage.removeItem('isMonitoring');
+      localStorage.removeItem('monitoringEmail');
+      localStorage.removeItem('monitoringPassword');
+      toast.error('Failed to start monitoring');
+    }
+  };
+
+  const handleStopMonitoring = async () => {
+    // Ask for confirmation before stopping
+    if (!confirm('Are you sure you want to stop monitoring? This will clear all current orders.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'DELETE',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setMonitoring(false);
+        localStorage.removeItem('isMonitoring');
+        localStorage.removeItem('monitoringEmail');
+        localStorage.removeItem('monitoringPassword');
+        setEmail('');
+        setPassword('');
+        setOrders([]);
+        forceUpdate();
+        toast.success('Stopped monitoring for new orders');
+      } else {
+        toast.error('Failed to stop monitoring');
+      }
+    } catch (error) {
+      console.error('Error stopping monitoring:', error);
+      toast.error('Failed to stop monitoring');
+    } finally {
+    setLoading(false);
+    }
+  };
+
+  const toggleDeliveryStatus = async (orderId: string, currentStatus: boolean) => {
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        },
+        body: JSON.stringify({ 
+          orderId, 
+          isDelivered: !currentStatus,
+          isActive: true 
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success(`Order marked as ${!currentStatus ? 'delivered' : 'not delivered'}`);
+        await fetchOrders();
+        forceUpdate();
+      }
+    } catch (error: unknown) {
+      console.error('Status update error:', error);
+      toast.error('Failed to update order status');
+    }
+  };
 
   const filteredOrders = orders.filter(order => {
     switch (activeTab) {
@@ -62,135 +357,6 @@ export default function Home() {
     }
   });
 
-  useEffect(() => {
-    fetchOrders();
-  }, []);
-
-  const fetchOrders = async () => {
-    try {
-      const response = await fetch('/api/orders');
-      const data = await response.json();
-      if (data.success) {
-        // Handle case when there are no orders
-        if (!data.orders || data.orders.length === 0) {
-          setOrders([]);
-          setStoreName('');
-          return;
-        }
-
-        // Process orders to extract notes
-        const processedOrders = data.orders.map((order: Order) => {
-          const notesMatch = order.items?.match(/備考：(.+?)(?:\n|$)/);
-          return {
-            ...order,
-            notes: notesMatch ? notesMatch[1].trim() : ''
-          };
-        });
-        setOrders(processedOrders);
-        // Extract store name from the first order's items if available
-        if (processedOrders.length > 0 && processedOrders[0].items) {
-          const items = processedOrders[0].items;
-          const storeMatch = items.match(/店舗：(.+?)(?:\n|$)/);
-          if (storeMatch) {
-            setStoreName(storeMatch[1].trim());
-          }
-        }
-      } else {
-        setOrders([]);
-        setStoreName('');
-      }
-    } catch (error) {
-      console.error('Error fetching orders:', error);
-      toast.error('Failed to fetch orders');
-      setOrders([]);
-      setStoreName('');
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    
-    // Clear existing orders from UI
-    setOrders([]);
-    setStoreName('');
-    
-    try {
-      // Single request to start monitoring
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email, 
-          password,
-          startMonitoring: true
-        }),
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        if (data.monitoring) {
-          setMonitoring(true);
-          if (data.existing) {
-            toast.success('Focused existing monitoring window');
-          } else {
-            toast.success('Started monitoring for new orders');
-          }
-          // Fetch initial orders after monitoring starts
-          fetchOrders();
-        }
-      } else {
-        toast.error(data.error || 'Failed to fetch orders');
-        setMonitoring(false);
-      }
-    } catch (error: unknown) {
-      console.error('Login error:', error);
-      toast.error('Failed to fetch orders');
-      setMonitoring(false);
-    }
-    setLoading(false);
-  };
-
-  const handleStopMonitoring = async () => {
-    try {
-      const response = await fetch('/api/orders', {
-        method: 'DELETE',
-      });
-      const data = await response.json();
-      if (data.success) {
-        setMonitoring(false);
-        toast.success('Stopped monitoring for new orders');
-      } else {
-        toast.error('Failed to stop monitoring');
-      }
-    } catch (error) {
-      console.error('Error stopping monitoring:', error);
-      toast.error('Failed to stop monitoring');
-    }
-  };
-
-  const toggleDeliveryStatus = async (orderId: string, currentStatus: boolean) => {
-    try {
-      const response = await fetch('/api/orders', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          orderId, 
-          isDelivered: !currentStatus,
-          isActive: true 
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        toast.success(`Order marked as ${!currentStatus ? 'delivered' : 'not delivered'}`);
-        fetchOrders();
-      }
-    } catch (error: unknown) {
-      console.error('Status update error:', error);
-      toast.error('Failed to update order status');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Toaster position="top-right" />
@@ -201,49 +367,59 @@ export default function Home() {
           <div className="flex justify-between items-center">
             <h1 className="text-3xl font-black" style={{ color: '#E83434' }}>Demae Robokun</h1>
             
-            {/* Login Form - Moved inside header */}
+            {/* Login Form - Updated with loading state */}
             <form onSubmit={handleLogin} className="flex items-center gap-2">
               <div className="w-48">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                   placeholder="Email"
                   className="w-full px-2 py-1 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-600 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-                  required
+                required
                   disabled={monitoring || loading}
-                />
-              </div>
+              />
+            </div>
               <div className="w-48">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
                   className="w-full px-2 py-1 text-sm text-gray-900 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-600 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-                  required
+                required
                   disabled={monitoring || loading}
-                />
-              </div>
+              />
+            </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                >
-                  {loading ? 'Monitoring...' : monitoring ? 'Focus Monitoring Window' : 'Start Monitoring'}
-                </button>
-                {(monitoring || loading) && (
-                  <button
-                    type="button"
-                    onClick={handleStopMonitoring}
-                    className="px-3 py-1 text-sm bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                  >
-                    Stop Monitoring
-                  </button>
+                {!loading && (
+                  <>
+            <button
+              type="submit"
+                      disabled={loading || monitoring}
+                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {monitoring ? 'Monitoring...' : 'Start Monitoring'}
+                    </button>
+                    {monitoring && (
+                      <button
+                        type="button"
+                        onClick={handleStopMonitoring}
+                        className="px-3 py-1 text-sm bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                      >
+                        Stop Monitoring
+            </button>
+                    )}
+                  </>
+                )}
+                {loading && (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                    <span className="text-sm text-gray-600">Checking status...</span>
+                  </div>
                 )}
               </div>
-            </form>
+          </form>
           </div>
         </div>
       </header>
@@ -352,12 +528,12 @@ export default function Home() {
                     ? 'm-[1px]'
                     : ''
                   }`}>
-                    {/* Order Header */}
+                {/* Order Header */}
                     <div className="px-2 py-2 bg-gray-50 border-b border-gray-200">
-                      <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center">
                         <h3 className="text-base font-medium text-gray-900">
-                          Order ID: {order.orderId}
-                        </h3>
+                      Order ID: {order.orderId}
+                    </h3>
                         <div className="flex gap-0.5">
                           {order.waitingTime === '-分' && (
                             <span className="px-1 py-0.5 bg-blue-100 text-blue-600 rounded-full text-sm font-bold">
@@ -378,24 +554,24 @@ export default function Home() {
                               Lassi
                             </span>
                           )}
-                          {order.receiptName && order.receiptName !== '-' && (
+                      {order.receiptName && order.receiptName !== '-' && (
                             <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
-                              Receipt
-                            </span>
-                          )}
-                          {(order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') && (
+                          Receipt
+                        </span>
+                      )}
+                      {(order.paymentMethod === '着払い' || order.paymentMethod === '代金引換') && (
                             <span className="px-1 py-0.5 bg-red-100 text-red-600 rounded-full text-sm font-bold">
-                              Cash
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                          Cash
+                        </span>
+                      )}
                     </div>
+                  </div>
+                </div>
 
-                    {/* Order Details */}
+                {/* Order Details */}
                     <div className="px-2 py-2 space-y-2">
                       <div className="grid grid-cols-2 gap-1">
-                        <div>
+                    <div>
                           <span className="text-xs text-gray-500">Order Time</span>
                           <p className="text-sm font-medium text-gray-900">
                             <span>{new Date(order.orderTime).toLocaleString('ja-JP', {
@@ -411,8 +587,8 @@ export default function Home() {
                               })}
                             </span>
                           </p>
-                        </div>
-                        <div>
+                    </div>
+                    <div>
                           <span className="text-xs text-gray-500">Delivery Time</span>
                           <p className={`text-sm font-medium ${
                             order.waitingTime === '-分'
@@ -428,45 +604,45 @@ export default function Home() {
                               {order.deliveryTime.split(' ')[1]?.replace(/:\d{2}$/, '')}
                             </span>
                           </p>
-                        </div>
-                        <div>
+                    </div>
+                    <div>
                           <span className="text-xs text-gray-500">Payment Method</span>
-                          <p className={`text-sm font-medium ${
-                            order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
-                              ? 'text-red-600 font-bold'
-                              : 'text-gray-900'
-                          }`}>
-                            {order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' 
-                              ? 'Cash'
-                              : order.paymentMethod === 'カード払い（注文時に決済）'
-                                ? 'Credit Card'
-                                : order.paymentMethod === 'Ａｍａｚｏｎ　Ｐａｙ（注文時に決済）'
-                                  ? 'Amazon Pay'
-                                  : order.paymentMethod}
-                          </p>
-                        </div>
-                        <div>
+                      <p className={`text-sm font-medium ${
+                        order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
+                          ? 'text-red-600 font-bold'
+                          : 'text-gray-900'
+                      }`}>
+                        {order.paymentMethod === '着払い' || order.paymentMethod === '代金引換' 
+                          ? 'Cash'
+                          : order.paymentMethod === 'カード払い（注文時に決済）'
+                            ? 'Credit Card'
+                            : order.paymentMethod === 'Ａｍａｚｏｎ　Ｐａｙ（注文時に決済）'
+                              ? 'Amazon Pay'
+                              : order.paymentMethod}
+                      </p>
+                    </div>
+                    <div>
                           <span className="text-xs text-gray-500">Visit Count</span>
-                          <p className="text-sm font-medium text-gray-900">{order.visitCount}</p>
-                        </div>
-                      </div>
+                      <p className="text-sm font-medium text-gray-900">{order.visitCount}</p>
+                    </div>
+                  </div>
 
                       <div className="border-t border-gray-200 pt-2">
                         <div className="grid grid-cols-2 gap-1">
-                          <div>
+                      <div>
                             <span className="text-xs text-gray-500">Customer Name</span>
-                            <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
-                          </div>
-                          <div>
+                        <p className="text-sm font-medium text-gray-900">{order.customerName}</p>
+                      </div>
+                      <div>
                             <span className="text-xs text-gray-500">Phone Number</span>
-                            <p className="text-sm font-medium text-gray-900">{order.customerPhone}</p>
-                          </div>
-                        </div>
+                        <p className="text-sm font-medium text-gray-900">{order.customerPhone}</p>
+                      </div>
+                    </div>
                         <div className="mt-1">
                           <span className="text-xs text-gray-500">Address</span>
                           <p className="text-sm font-medium text-gray-900">{order.address}</p>
-                        </div>
-                      </div>
+                    </div>
+                  </div>
 
                       {/* Notes Section */}
                       {order.notes && (
@@ -476,37 +652,22 @@ export default function Home() {
                         </div>
                       )}
 
-                      <div className="border-t border-gray-200 pt-1">
-                        <div className="grid grid-cols-2 gap-0.5">
-                          <div>
-                            <span className="text-xs text-gray-500">Total Amount (Tax Incl.)</span>
-                            <p className={`text-xs font-medium ${
-                              order.paymentMethod === '着払い' || order.paymentMethod === '代金引換'
-                                ? 'text-red-600 font-bold'
-                                : 'text-gray-900'
-                            }`}>
-                              ¥{(order.totalAmount || 0).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
+                </div>
 
-                    </div>
-
-                    {/* Actions */}
+                {/* Actions */}
                     <div className="px-2 py-2 bg-gray-50 border-t border-gray-200">
-                      <button
-                        onClick={() => toggleDeliveryStatus(order.orderId, order.isDelivered || false)}
+                  <button
+                    onClick={() => toggleDeliveryStatus(order.orderId, order.isDelivered || false)}
                         className={`w-full inline-flex justify-center items-center px-2 py-1.5 rounded-md text-sm font-medium text-white shadow-sm transition-colors duration-200 ${
-                          order.isDelivered 
-                            ? 'bg-blue-600 hover:bg-blue-700' 
-                            : 'bg-green-600 hover:bg-green-700'
-                        }`}
-                      >
+                      order.isDelivered 
+                        ? 'bg-blue-600 hover:bg-blue-700' 
+                        : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                  >
                         {order.isDelivered 
                           ? (activeTab === 'delivered' ? 'Send Back' : 'Not Delivered')
                           : 'Delivered'}
-                      </button>
+                  </button>
                     </div>
                   </div>
                 </div>

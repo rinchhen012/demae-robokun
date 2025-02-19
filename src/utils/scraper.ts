@@ -14,41 +14,67 @@ interface DetailedOrder {
   waitingTime: string;
   address: string;
   items: string;
+  notes: string;
 }
 
 let monitoringBrowser: Browser | null = null;
 let monitoringPage: Page | null = null;
 let isMonitoringActive = false;
+let processedOrderIds = new Set<string>();
+
+export async function getMonitoringStatus(): Promise<boolean> {
+  try {
+    if (!monitoringBrowser || !monitoringPage) {
+      return false;
+    }
+
+    // Check if browser is connected and page is not closed
+    const isConnected = monitoringBrowser.isConnected();
+    const isPageOpen = !monitoringPage.isClosed();
+    
+    // Verify we can actually interact with the page
+    if (isConnected && isPageOpen) {
+      try {
+        await monitoringPage.evaluate(() => document.title);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  } catch (error) {
+    console.error('Error checking monitoring status:', error);
+    return false;
+  }
+}
+
+export async function checkIsMonitoringActive(): Promise<boolean> {
+  return getMonitoringStatus();
+}
 
 export async function startOrderMonitoring(email: string, password: string, onNewOrders: (orders: DetailedOrder[]) => void) {
-  isMonitoringActive = true;
-  
-  // If there's an existing browser session, try to reuse it
-  if (monitoringBrowser && monitoringPage) {
-    try {
-      // Check if the page is still accessible
-      await monitoringPage.evaluate(() => document.title);
-      await monitoringPage.bringToFront();
-      return { success: true, monitoring: true, existing: true };
-    } catch {
-      // Only cleanup if we can't access the page
-      await stopOrderMonitoring();
-    }
-  }
-
   try {
-    // Launch new browser if we don't have one
-    if (!monitoringBrowser) {
-      monitoringBrowser = await chromium.launch({ 
-        headless: false,
-        slowMo: 200
-      });
+    // Check if there's already an active monitoring session
+    if (await getMonitoringStatus()) {
+      // Focus the existing window
+      if (monitoringPage) {
+        await monitoringPage.bringToFront();
+      }
+      return { success: true, monitoring: true, existing: true };
     }
 
-    // Create new page if we don't have one
-    if (!monitoringPage) {
-      monitoringPage = await monitoringBrowser.newPage();
-    }
+    // Clean up any existing browser/page instances
+    await stopOrderMonitoring();
+
+    // Launch new browser
+    monitoringBrowser = await chromium.launch({ 
+      headless: false,
+      slowMo: 200
+    });
+
+    // Create new page
+    monitoringPage = await monitoringBrowser.newPage();
 
     // Login process
     await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
@@ -66,20 +92,38 @@ export async function startOrderMonitoring(email: string, password: string, onNe
       throw new Error(`Login failed: ${errorText}`);
     }
 
-    const knownOrderIds = new Set<string>();
+    // Set monitoring as active
+    isMonitoringActive = true;
+    // Clear processed orders set
+    processedOrderIds.clear();
+
+    // Go to orders page initially
+    await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+      waitUntil: 'networkidle',
+      timeout: 30000
+    });
 
     // Start monitoring loop
-    while (monitoringBrowser && monitoringPage && isMonitoringActive) {
+    while (await getMonitoringStatus() && isMonitoringActive) {
       try {
         // Check if browser or page is closed
         if (!monitoringBrowser || !monitoringPage || monitoringPage.isClosed()) {
-          throw new Error('Browser or page is closed');
+          console.error('Browser or page is closed, stopping monitoring');
+          isMonitoringActive = false;
+          break;
         }
 
-        await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-          waitUntil: 'networkidle',
-          timeout: 30000 // Increase timeout to 30 seconds
-        });
+        // Refresh the order list page
+        try {
+          await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+        } catch (navigationError) {
+          console.error('Failed to reload order list:', navigationError);
+          if (!monitoringPage || monitoringPage.isClosed()) {
+            isMonitoringActive = false;
+            break;
+          }
+          continue;
+        }
 
         // Wait for either the table or the no-orders message
         try {
@@ -88,15 +132,20 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             monitoringPage.waitForSelector('text=/注文がありません|No orders found/', { timeout: 5000 })
           ]);
         } catch {
-          // If neither is found after timeout, just wait and continue
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // If neither is found after timeout, check if page is still available
+          if (!monitoringPage || monitoringPage.isClosed()) {
+            isMonitoringActive = false;
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 3000));
           continue;
         }
 
         // Check if there are any orders
         const hasOrders = await monitoringPage.$('.Table_table__RdwIW');
         if (!hasOrders) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before next check
+          console.log('No orders found in table');
+          await new Promise(resolve => setTimeout(resolve, 3000));
           continue;
         }
 
@@ -109,16 +158,25 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             index: Array.from(row.parentElement?.children || []).indexOf(row)
           }));
         });
+        console.log('Found orders in table:', currentOrders);
 
-        // Filter new orders
-        const newOrders = currentOrders.filter(order => !knownOrderIds.has(order.orderId));
+        // Filter new orders that haven't been processed
+        const newOrders = currentOrders.filter(order => !processedOrderIds.has(order.orderId));
+        console.log('New orders found:', newOrders);
 
         if (newOrders.length > 0) {
           const detailedOrders: DetailedOrder[] = [];
 
           // Process each new order
-          for (const { status, index } of newOrders) {
+          for (const { orderId, status, index } of newOrders) {
             try {
+              // Check if page is still available before clicking
+              if (!monitoringPage || monitoringPage.isClosed()) {
+                isMonitoringActive = false;
+                break;
+              }
+
+              console.log(`Processing order at index ${index}`);
               // Click on the order row
               await monitoringPage.locator('.Table_table__RdwIW tbody tr').nth(index).click();
               await monitoringPage.waitForLoadState('networkidle');
@@ -225,7 +283,33 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 // Get items information
                 let items = '';
                 let hasUtensils = false;
+                let notes = '';  // Add notes variable
                 
+                // Extract notes from 備考 fieldset
+                const remarkFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
+                  el.textContent?.includes('備考')
+                );
+                
+                if (remarkFieldset) {
+                  const remarkContent = remarkFieldset.textContent || '';
+                  notes = remarkContent.replace('備考', '').trim();
+                }
+
+                // If notes not found in fieldset, try finding in other elements
+                if (!notes) {
+                  const remarkElements = Array.from(document.querySelectorAll('*')).filter(el => 
+                    el.textContent?.includes('備考')
+                  );
+                  
+                  for (const el of remarkElements) {
+                    const parent = el.parentElement;
+                    if (parent && parent.textContent) {
+                      notes = parent.textContent.replace('備考', '').trim();
+                      if (notes) break;
+                    }
+                  }
+                }
+
                 // Try to find utensils in the order items table first
                 const orderItemsTable = document.querySelector('table.orderItemList');
                 if (orderItemsTable) {
@@ -290,51 +374,64 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                   address: findValueByLabel('配達先住所'),
                   items: items,
                   totalAmount: total,
-                  status
+                  status,
+                  notes: notes  // Add notes to the returned object
                 };
               });
+              console.log('Retrieved order details:', orderDetails);
 
               if (orderDetails.orderId && orderDetails.orderId !== '-') {
-                detailedOrders.push({
-                  ...orderDetails,
-                });
+                detailedOrders.push(orderDetails);
+                processedOrderIds.add(orderDetails.orderId);
+                
+                // Notify about this single order immediately
+                console.log('Notifying about new order:', orderDetails);
+                onNewOrders([orderDetails]);
               }
 
               // Go back to the order list
               await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-                waitUntil: 'networkidle'
+                waitUntil: 'networkidle',
+                timeout: 30000
               });
-            } catch {
+
+            } catch (error) {
+              console.error('Error processing individual order:', error);
+              // Try to go back to the order list if there's an error
+              try {
+                await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                  waitUntil: 'networkidle',
+                  timeout: 30000
+                });
+              } catch (navigationError) {
+                console.error('Failed to recover after error:', navigationError);
+                if (!monitoringPage || monitoringPage.isClosed()) {
+                  isMonitoringActive = false;
+                  break;
+                }
+              }
               continue;
             }
           }
-
-          // Update known order IDs
-          detailedOrders.forEach(order => knownOrderIds.add(order.orderId));
-
-          // Notify about new orders
-          if (detailedOrders.length > 0) {
-            onNewOrders(detailedOrders);
-          }
         }
 
-        // Wait before next check
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 seconds interval
+        // Wait 3 seconds before next check
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         
-        // Only restart if the browser or page is actually closed
-        if ((!monitoringBrowser || !monitoringPage || monitoringPage.isClosed()) &&
-            (errorMessage.includes('Target closed') || 
-             errorMessage.includes('Browser or page is closed') ||
-             errorMessage.includes('Target page, context or browser has been closed'))) {
-          console.error('Browser closed, attempting to restart monitoring');
-          await stopOrderMonitoring();
-          return startOrderMonitoring(email, password, onNewOrders);
+        // Check if browser or page is closed
+        if (!monitoringBrowser || !monitoringPage || monitoringPage.isClosed() ||
+            errorMessage.includes('Target closed') || 
+            errorMessage.includes('Browser or page is closed') ||
+            errorMessage.includes('Target page, context or browser has been closed')) {
+          console.error('Browser closed or page not available, stopping monitoring');
+          isMonitoringActive = false;
+          break;
         }
         
-        // For other errors, just log and continue monitoring
+        // For other errors, log and continue monitoring
         console.error('Error during order monitoring:', error);
         await new Promise(resolve => setTimeout(resolve, 5000));
         
@@ -348,59 +445,65 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           }
         } catch (navigationError) {
           console.error('Failed to recover from error:', navigationError);
+          if (!monitoringPage || monitoringPage.isClosed()) {
+            isMonitoringActive = false;
+            break;
+          }
         }
       }
+    }
+
+    // If we've broken out of the loop, ensure monitoring is stopped
+    if (!isMonitoringActive) {
+      await stopOrderMonitoring();
+      return { success: false, monitoring: false, existing: false };
     }
 
     return { success: true, monitoring: true, existing: false };
   } catch (error) {
+    console.error('Error in startOrderMonitoring:', error);
     await stopOrderMonitoring();
-    throw error;
+    return { success: false, monitoring: false, existing: false };
   }
 }
 
 export async function stopOrderMonitoring() {
-  isMonitoringActive = false;
-  
   try {
-    // First try to close the page if it exists and is not already closed
-    if (monitoringPage) {
+    // Set monitoring as inactive first
+    isMonitoringActive = false;
+    // Clear processed orders set
+    processedOrderIds.clear();
+
+    // Close page if it exists and is not closed
+    if (monitoringPage && !monitoringPage.isClosed()) {
       try {
-        if (!monitoringPage.isClosed()) {
-          await monitoringPage.close();
-        }
+        await monitoringPage.close();
       } catch (error) {
         console.error('Error closing page:', error);
       }
-      monitoringPage = null;
     }
 
-    // Then try to close the browser if it exists
-    if (monitoringBrowser) {
+    // Close browser if it exists and is connected
+    if (monitoringBrowser && monitoringBrowser.isConnected()) {
       try {
-        // Get all browser contexts
+        // Close all contexts first
         const contexts = monitoringBrowser.contexts();
-        // Close each context
         for (const context of contexts) {
-          try {
-            await context.close();
-          } catch (error) {
-            console.error('Error closing context:', error);
-          }
+          await context.close();
         }
-        // Finally close the browser
         await monitoringBrowser.close();
       } catch (error) {
         console.error('Error closing browser:', error);
       }
-      monitoringBrowser = null;
     }
   } catch (error) {
     console.error('Error in stopOrderMonitoring:', error);
   } finally {
-    // Ensure these are set to null even if there were errors
+    // Always reset the state variables
     monitoringPage = null;
     monitoringBrowser = null;
+    isMonitoringActive = false;
+    processedOrderIds.clear();
   }
 }
 
@@ -599,7 +702,33 @@ export async function scrapeOrders(email: string, password: string) {
           // Get items information
           let items = '';
           let hasUtensils = false;
+          let notes = '';  // Add notes variable
           
+          // Extract notes from 備考 fieldset
+          const remarkFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
+            el.textContent?.includes('備考')
+          );
+          
+          if (remarkFieldset) {
+            const remarkContent = remarkFieldset.textContent || '';
+            notes = remarkContent.replace('備考', '').trim();
+          }
+
+          // If notes not found in fieldset, try finding in other elements
+          if (!notes) {
+            const remarkElements = Array.from(document.querySelectorAll('*')).filter(el => 
+              el.textContent?.includes('備考')
+            );
+            
+            for (const el of remarkElements) {
+              const parent = el.parentElement;
+              if (parent && parent.textContent) {
+                notes = parent.textContent.replace('備考', '').trim();
+                if (notes) break;
+              }
+            }
+          }
+
           // Try to find utensils in the order items table first
           const orderItemsTable = document.querySelector('table.orderItemList');
           if (orderItemsTable) {
@@ -664,7 +793,8 @@ export async function scrapeOrders(email: string, password: string) {
             address: findValueByLabel('配達先住所'),
             items: items,
             totalAmount: total,
-            status
+            status,
+            notes: notes  // Add notes to the returned object
           };
         });
 
