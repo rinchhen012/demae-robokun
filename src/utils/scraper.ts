@@ -113,18 +113,6 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           break;
         }
 
-        // Refresh the order list page
-        try {
-          await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
-        } catch (navigationError) {
-          console.error('Failed to reload order list:', navigationError);
-          if (!monitoringPage || monitoringPage.isClosed()) {
-            isMonitoringActive = false;
-            break;
-          }
-          continue;
-        }
-
         // Wait for either the table or the no-orders message
         try {
           await Promise.race([
@@ -138,6 +126,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             break;
           }
           await new Promise(resolve => setTimeout(resolve, 3000));
+          await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
           continue;
         }
 
@@ -146,6 +135,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
         if (!hasOrders) {
           console.log('No orders found in table');
           await new Promise(resolve => setTimeout(resolve, 3000));
+          await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
           continue;
         }
 
@@ -158,15 +148,13 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             index: Array.from(row.parentElement?.children || []).indexOf(row)
           }));
         });
-        console.log('Found orders in table:', currentOrders);
 
         // Filter new orders that haven't been processed
         const newOrders = currentOrders.filter(order => !processedOrderIds.has(order.orderId));
-        console.log('New orders found:', newOrders);
 
         if (newOrders.length > 0) {
-          const detailedOrders: DetailedOrder[] = [];
-
+          console.log('Found new orders:', newOrders.length);
+          
           // Process each new order
           for (const { orderId, status, index } of newOrders) {
             try {
@@ -176,7 +164,6 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 break;
               }
 
-              console.log(`Processing order at index ${index}`);
               // Click on the order row
               await monitoringPage.locator('.Table_table__RdwIW tbody tr').nth(index).click();
               await monitoringPage.waitForLoadState('networkidle');
@@ -381,11 +368,8 @@ export async function startOrderMonitoring(email: string, password: string, onNe
               console.log('Retrieved order details:', orderDetails);
 
               if (orderDetails.orderId && orderDetails.orderId !== '-') {
-                detailedOrders.push(orderDetails);
                 processedOrderIds.add(orderDetails.orderId);
-                
-                // Notify about this single order immediately
-                console.log('Notifying about new order:', orderDetails);
+                console.log('Processing new order:', orderDetails.orderId);
                 onNewOrders([orderDetails]);
               }
 
@@ -415,8 +399,9 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           }
         }
 
-        // Wait 3 seconds before next check
+        // Wait before next check and refresh the page
         await new Promise(resolve => setTimeout(resolve, 3000));
+        await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
 
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);

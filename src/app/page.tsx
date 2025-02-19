@@ -95,16 +95,12 @@ export default function Home() {
           return;
         }
 
-        console.log('Received orders with notes:', data.orders.map((o: Order) => ({ orderId: o.orderId, notes: o.notes })));
-
         const sortedOrders = data.orders.map((order: Order) => ({
           ...order,
           notes: (!order.notes || !order.notes.trim() || order.notes === '-' || /^[{<!]/.test(order.notes)) ? '-' : order.notes
         })).sort((a: Order, b: Order) => {
           return new Date(b.orderTime).getTime() - new Date(a.orderTime).getTime();
         });
-
-        console.log('Sorted orders with notes:', sortedOrders.map((o: Order) => ({ orderId: o.orderId, notes: o.notes })));
 
         // Update orders with the new state
         updateOrders(sortedOrders);
