@@ -50,24 +50,25 @@ export default function Home() {
   const [monitoring, setMonitoring] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
   const [storeName, setStoreName] = useState('');
-  const [lastUpdate, setLastUpdate] = useState<number>(Date.now());
 
   // Function to force a re-render
   const forceUpdate = useCallback(() => {
-    setLastUpdate(prev => prev + 1);
+    // Force React to re-render by triggering a state update
+    requestAnimationFrame(() => {
+      setOrders(prev => [...prev]);
+    });
   }, []);
 
   // Function to update orders state
   const updateOrders = useCallback((newOrders: Order[]) => {
     setOrders(newOrders);
-    forceUpdate();
-    // Force React to re-render by triggering a state update
+    // Ensure UI updates by using requestAnimationFrame
     requestAnimationFrame(() => {
-      setLastUpdate(Date.now());
+      forceUpdate();
     });
   }, [forceUpdate]);
 
-  // Fetch orders function with state updates
+  // Fetch orders function with improved error handling and state updates
   const fetchOrders = useCallback(async () => {
     if (!monitoring) return;
 
@@ -102,7 +103,7 @@ export default function Home() {
           return new Date(b.orderTime).getTime() - new Date(a.orderTime).getTime();
         });
 
-        // Update orders with the new state
+        // Update orders and ensure UI updates
         updateOrders(sortedOrders);
 
         if (sortedOrders.length > 0 && sortedOrders[0].items) {
@@ -112,6 +113,11 @@ export default function Home() {
             setStoreName(storeMatch[1].trim());
           }
         }
+
+        // Force an immediate UI update
+        requestAnimationFrame(() => {
+          forceUpdate();
+        });
       } else {
         console.log('Failed to fetch orders:', data.error);
         updateOrders([]);
@@ -123,7 +129,7 @@ export default function Home() {
       updateOrders([]);
       setStoreName('');
     }
-  }, [monitoring, updateOrders]);
+  }, [monitoring, updateOrders, forceUpdate]);
 
   // Check monitoring status from backend
   const checkMonitoringStatus = useCallback(async () => {
@@ -145,6 +151,33 @@ export default function Home() {
       
       if (data.success) {
         const newMonitoringState = data.monitoring;
+        
+        // If monitoring was active but is now inactive (window closed)
+        if (monitoring && !newMonitoringState) {
+          // Stop monitoring completely
+          await fetch('/api/orders', {
+            method: 'DELETE',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          
+          setMonitoring(false);
+          setOrders([]);
+          setStoreName('');
+          setEmail('');
+          setPassword('');
+          localStorage.removeItem('isMonitoring');
+          localStorage.removeItem('monitoringEmail');
+          localStorage.removeItem('monitoringPassword');
+          toast.error('Monitoring stopped: Browser window was closed');
+          forceUpdate();
+          setLoading(false);
+          return;
+        }
+
         if (newMonitoringState !== monitoring) {
           setMonitoring(newMonitoringState);
           if (!newMonitoringState) {
@@ -173,12 +206,18 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error checking monitoring status:', error);
-      setLoading(false);
-      setMonitoring(false);
-      updateOrders([]);
-      localStorage.removeItem('isMonitoring');
-      localStorage.removeItem('monitoringEmail');
-      localStorage.removeItem('monitoringPassword');
+      if (monitoring) {
+        setMonitoring(false);
+        setLoading(false);
+        setOrders([]);
+        setStoreName('');
+        setEmail('');
+        setPassword('');
+        localStorage.removeItem('isMonitoring');
+        localStorage.removeItem('monitoringEmail');
+        localStorage.removeItem('monitoringPassword');
+        toast.error('Monitoring stopped: Connection lost');
+      }
       forceUpdate();
     }
   }, [monitoring, forceUpdate, updateOrders]);
@@ -194,26 +233,47 @@ export default function Home() {
     initialize();
   }, [checkMonitoringStatus, fetchOrders, monitoring]);
 
-  // Set up polling intervals
+  // Effect to handle monitoring state changes
   useEffect(() => {
-    let monitoringInterval: NodeJS.Timeout;
-    let fetchInterval: NodeJS.Timeout;
-
     if (monitoring) {
-      // Set up intervals for both monitoring and fetching
-      monitoringInterval = setInterval(checkMonitoringStatus, 5000);
-      fetchInterval = setInterval(fetchOrders, 2000);
+      let monitoringInterval: NodeJS.Timeout;
+      let fetchInterval: NodeJS.Timeout;
+
+      const startMonitoring = async () => {
+        try {
+          // Initial fetch
+          await fetchOrders();
+
+          // Set up polling intervals
+          fetchInterval = setInterval(fetchOrders, 2000);
+          monitoringInterval = setInterval(checkMonitoringStatus, 5000);
+        } catch (error) {
+          console.error('Error in monitoring loop:', error);
+        }
+      };
+
+      startMonitoring();
+
+      // Cleanup function
+      return () => {
+        if (monitoringInterval) clearInterval(monitoringInterval);
+        if (fetchInterval) clearInterval(fetchInterval);
+      };
     }
+  }, [monitoring, fetchOrders, checkMonitoringStatus]);
 
-    return () => {
-      if (monitoringInterval) clearInterval(monitoringInterval);
-      if (fetchInterval) clearInterval(fetchInterval);
-    };
-  }, [monitoring, checkMonitoringStatus, fetchOrders]);
+  // Add effect to handle real-time UI updates
+  useEffect(() => {
+    if (monitoring) {
+      // Force an immediate UI update when monitoring starts
+      forceUpdate();
+      fetchOrders();
+    }
+  }, [monitoring, forceUpdate, fetchOrders]);
 
-  const handleLogin = async (e: React.FormEvent | null, isReconnecting = false) => {
+  const handleLogin = async (e: React.FormEvent | null) => {
     if (e) {
-    e.preventDefault();
+      e.preventDefault();
     }
 
     if (!email || !password) {
@@ -241,37 +301,95 @@ export default function Home() {
 
       const data = await response.json();
       if (data.success) {
-        setMonitoring(true);
-        setLoading(false);
-        forceUpdate();
-        
-        localStorage.setItem('isMonitoring', 'true');
-        localStorage.setItem('monitoringEmail', email);
-        localStorage.setItem('monitoringPassword', password);
-        
+        // Update state in a single batch
+        await Promise.all([
+          new Promise<void>(resolve => {
+            setMonitoring(true);
+            setLoading(false);
+            resolve();
+          }),
+          new Promise<void>(resolve => {
+            localStorage.setItem('isMonitoring', 'true');
+            localStorage.setItem('monitoringEmail', email);
+            localStorage.setItem('monitoringPassword', password);
+            resolve();
+          })
+        ]);
+
+        // Show success message
         if (data.existing) {
           toast.success('Focused existing monitoring window');
         } else {
           toast.success('Started monitoring for new orders');
         }
-        
-        // Fetch initial orders after monitoring starts
-        await fetchOrders();
+
+        // Fetch initial data
+        const ordersResponse = await fetch('/api/orders', {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        });
+
+        if (ordersResponse.ok) {
+          const ordersData = await ordersResponse.json();
+          if (ordersData.success && ordersData.orders) {
+            const sortedOrders = ordersData.orders
+              .map((order: Order) => ({
+                ...order,
+                notes: (!order.notes || !order.notes.trim() || order.notes === '-' || /^[{<!]/.test(order.notes)) ? '-' : order.notes
+              }))
+              .sort((a: Order, b: Order) => new Date(b.orderTime).getTime() - new Date(a.orderTime).getTime());
+
+            // Update orders state
+            setOrders(sortedOrders);
+
+            // Update store name if available
+            if (sortedOrders.length > 0 && sortedOrders[0].items) {
+              const storeMatch = sortedOrders[0].items.match(/店舗：(.+?)(?:\n|$)/);
+              if (storeMatch) {
+                setStoreName(storeMatch[1].trim());
+              }
+            }
+          }
+        }
       } else {
-        setMonitoring(false);
-        setLoading(false);
-        localStorage.removeItem('isMonitoring');
-        localStorage.removeItem('monitoringEmail');
-        localStorage.removeItem('monitoringPassword');
+        // Clear all states and storage on failure
+        await Promise.all([
+          new Promise<void>(resolve => {
+            setMonitoring(false);
+            setLoading(false);
+            setOrders([]);
+            resolve();
+          }),
+          new Promise<void>(resolve => {
+            localStorage.removeItem('isMonitoring');
+            localStorage.removeItem('monitoringEmail');
+            localStorage.removeItem('monitoringPassword');
+            resolve();
+          })
+        ]);
         toast.error(data.error || 'Failed to start monitoring');
       }
     } catch (error) {
       console.error('Login error:', error);
-      setMonitoring(false);
-      setLoading(false);
-      localStorage.removeItem('isMonitoring');
-      localStorage.removeItem('monitoringEmail');
-      localStorage.removeItem('monitoringPassword');
+      // Clear all states and storage on error
+      await Promise.all([
+        new Promise<void>(resolve => {
+          setMonitoring(false);
+          setLoading(false);
+          setOrders([]);
+          resolve();
+        }),
+        new Promise<void>(resolve => {
+          localStorage.removeItem('isMonitoring');
+          localStorage.removeItem('monitoringEmail');
+          localStorage.removeItem('monitoringPassword');
+          resolve();
+        })
+      ]);
       toast.error('Failed to start monitoring');
     }
   };
@@ -390,8 +508,8 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 {!loading && (
                   <>
-            <button
-              type="submit"
+                    <button
+                      type="submit"
                       disabled={loading || monitoring}
                       className="px-3 py-1 text-sm bg-blue-600 text-white rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
@@ -404,14 +522,27 @@ export default function Home() {
                         className="px-3 py-1 text-sm bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
                       >
                         Stop Monitoring
-            </button>
+                      </button>
                     )}
                   </>
                 )}
-                {loading && (
+                {loading && !monitoring && (
                   <div className="flex items-center gap-2">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                     <span className="text-sm text-gray-600">Checking status...</span>
+                  </div>
+                )}
+                {loading && monitoring && (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                    <span className="text-sm text-gray-600">Checking orders...</span>
+                    <button
+                      type="button"
+                      onClick={handleStopMonitoring}
+                      className="px-3 py-1 text-sm bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                    >
+                      Stop Monitoring
+                    </button>
                   </div>
                 )}
               </div>
@@ -673,7 +804,7 @@ export default function Home() {
           {orders.length === 0 && (
             <div className="text-center py-12 bg-white rounded-lg shadow-sm">
               <p className="text-gray-500">
-                {(monitoring || loading) ? 'No orders found' : 'No orders found. Please login to fetch orders.'}
+                {monitoring ? 'No orders found. Monitoring is active.' : 'No orders found. Please login to fetch orders.'}
               </p>
             </div>
           )}

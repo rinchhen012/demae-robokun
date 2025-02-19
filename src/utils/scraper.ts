@@ -20,7 +20,7 @@ interface DetailedOrder {
 let monitoringBrowser: Browser | null = null;
 let monitoringPage: Page | null = null;
 let isMonitoringActive = false;
-let processedOrderIds = new Set<string>();
+const processedOrderIds = new Set<string>();
 
 export async function getMonitoringStatus(): Promise<boolean> {
   try {
@@ -132,8 +132,21 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
         // Check if there are any orders
         const hasOrders = await monitoringPage.$('.Table_table__RdwIW');
+        const hasNoOrdersMessage = await monitoringPage.$('text=/注文がありません|No orders found/');
+
+        if (hasNoOrdersMessage) {
+          console.log('No orders found (confirmed by message)');
+          // Still report as monitoring but with no orders
+          onNewOrders([]);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+          continue;
+        }
+
         if (!hasOrders) {
           console.log('No orders found in table');
+          // Still report as monitoring but with no orders
+          onNewOrders([]);
           await new Promise(resolve => setTimeout(resolve, 3000));
           await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
           continue;
@@ -164,8 +177,52 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 break;
               }
 
-              // Click on the order row
-              await monitoringPage.locator('.Table_table__RdwIW tbody tr').nth(index).click();
+              console.log(`Processing order ${orderId} at index ${index}`);
+
+              // Make sure we're on the order list page
+              const isOnOrderList = await monitoringPage.$('.Table_table__RdwIW');
+              if (!isOnOrderList) {
+                console.log('Not on order list, navigating back...');
+                await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                  waitUntil: 'networkidle',
+                  timeout: 30000
+                });
+                // Wait for the table to be visible
+                await monitoringPage.waitForSelector('.Table_table__RdwIW', { timeout: 15000 });
+              }
+
+              // Click on the order row with retry logic
+              let clickSuccess = false;
+              let retryCount = 0;
+              while (!clickSuccess && retryCount < 3) {
+                try {
+                  const row = await monitoringPage.locator('.Table_table__RdwIW tbody tr').nth(index);
+                  // Check if the row exists and contains the expected order ID
+                  const rowOrderId = await row.locator('td').first().textContent();
+                  if (rowOrderId?.trim() === orderId) {
+                    await row.click();
+                    clickSuccess = true;
+                  } else {
+                    throw new Error('Order ID mismatch');
+                  }
+                } catch (clickError) {
+                  console.log(`Click attempt ${retryCount + 1} failed:`, clickError);
+                  retryCount++;
+                  if (retryCount < 3) {
+                    // Short wait before retry
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // Refresh the page
+                    await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+                  }
+                }
+              }
+
+              if (!clickSuccess) {
+                console.error(`Failed to click order ${orderId} after ${retryCount} attempts`);
+                continue;
+              }
+
+              // Wait for the order details page to load
               await monitoringPage.waitForLoadState('networkidle');
               await monitoringPage.waitForSelector('dl', { state: 'visible', timeout: 15000 });
 
@@ -370,10 +427,11 @@ export async function startOrderMonitoring(email: string, password: string, onNe
               if (orderDetails.orderId && orderDetails.orderId !== '-') {
                 processedOrderIds.add(orderDetails.orderId);
                 console.log('Processing new order:', orderDetails.orderId);
+                // Update UI immediately with this single order
                 onNewOrders([orderDetails]);
               }
 
-              // Go back to the order list
+              // Navigate back to the order list
               await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
                 waitUntil: 'networkidle',
                 timeout: 30000
@@ -381,7 +439,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
             } catch (error) {
               console.error('Error processing individual order:', error);
-              // Try to go back to the order list if there's an error
+              // Try to recover by going back to the order list
               try {
                 await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
                   waitUntil: 'networkidle',
@@ -389,10 +447,6 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 });
               } catch (navigationError) {
                 console.error('Failed to recover after error:', navigationError);
-                if (!monitoringPage || monitoringPage.isClosed()) {
-                  isMonitoringActive = false;
-                  break;
-                }
               }
               continue;
             }
