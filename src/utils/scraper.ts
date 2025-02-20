@@ -679,7 +679,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
               }, { timeout: 30000 });
 
               // Extra wait to ensure all content is loaded
-              await monitoringPage.waitForTimeout(2000);
+              await monitoringPage.waitForTimeout(1500);
 
               const orderDetails = await monitoringPage.evaluate(() => {
                 const findValueByLabel = (labelText: string): string => {
@@ -884,7 +884,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 orderProcessed = true;
 
                 // Wait before navigating back
-                await monitoringPage.waitForTimeout(2000);
+                await monitoringPage.waitForTimeout(1500);
               }
 
               // Return to order list with retries and increased timeouts
