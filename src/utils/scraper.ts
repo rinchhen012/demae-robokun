@@ -53,6 +53,36 @@ export async function checkIsMonitoringActive(): Promise<boolean> {
   return getMonitoringStatus();
 }
 
+async function checkAndRefreshSession(page: Page, email: string, password: string): Promise<boolean> {
+  try {
+    // Check if we're logged out by looking for login button
+    const isLoggedOut = await page.$('button:has-text("メールアドレス")') !== null;
+    
+    if (isLoggedOut) {
+      console.log('Session expired, attempting to re-login...');
+      await page.click('button:has-text("メールアドレス")');
+      const emailLoginForm = page.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+      await emailLoginForm.locator('input[type="email"]').fill(email);
+      await emailLoginForm.locator('input[type="password"]').fill(password);
+      await page.click('button:has-text("ログイン")');
+      await page.waitForNavigation({ waitUntil: 'networkidle' });
+      
+      // Verify login was successful
+      const errorElement = await page.$('text=/Error|Invalid|失敗/i');
+      if (errorElement) {
+        console.error('Re-login failed');
+        return false;
+      }
+      console.log('Re-login successful');
+      return true;
+    }
+    return true;
+  } catch (error) {
+    console.error('Error checking/refreshing session:', error);
+    return false;
+  }
+}
+
 export async function startOrderMonitoring(email: string, password: string, onNewOrders: (orders: DetailedOrder[]) => void) {
   try {
     // Check if there's already an active monitoring session
@@ -353,22 +383,72 @@ export async function startOrderMonitoring(email: string, password: string, onNe
     }
 
     console.log('Starting monitoring for new orders...');
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 5;
 
     // Start monitoring loop for new orders
     while (isMonitoringActive) {
       try {
-        if (!monitoringBrowser?.isConnected() || !monitoringPage || monitoringPage.isClosed()) {
-          console.error('Browser or page unavailable, stopping monitoring');
-          isMonitoringActive = false;
-          break;
+        // Reset consecutive errors on successful iteration
+        consecutiveErrors = 0;
+
+        // Check browser and page status
+        if (!monitoringBrowser?.isConnected()) {
+          console.error('Browser disconnected, attempting to reconnect...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
         }
 
-        // Ensure we're on the order list page
-        if (!monitoringPage.url().includes('order-list')) {
-          await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-            waitUntil: 'networkidle',
-            timeout: 30000
-          });
+        if (!monitoringPage || monitoringPage.isClosed()) {
+          console.error('Page unavailable, attempting to recreate...');
+          try {
+            monitoringPage = await monitoringBrowser.newPage();
+            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+              waitUntil: 'networkidle',
+              timeout: 30000
+            });
+            
+            // Check and refresh session after recreating page
+            if (!await checkAndRefreshSession(monitoringPage, email, password)) {
+              throw new Error('Failed to establish session after recreating page');
+            }
+            
+            continue;
+          } catch (error) {
+            console.error('Failed to recreate page:', error);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            continue;
+          }
+        }
+
+        // Check and refresh session periodically
+        if (!await checkAndRefreshSession(monitoringPage, email, password)) {
+          throw new Error('Session check failed');
+        }
+
+        // Ensure we're on the order list page with retries
+        let retryCount = 0;
+        let navigationSuccessful = false;
+        while (!navigationSuccessful && retryCount < 3) {
+          try {
+            if (!monitoringPage.url().includes('order-list')) {
+              await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                waitUntil: 'networkidle',
+                timeout: 30000
+              });
+            }
+            navigationSuccessful = true;
+          } catch (error) {
+            console.error(`Navigation retry ${retryCount + 1} failed:`, error);
+            retryCount++;
+            if (retryCount < 3) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+        }
+
+        if (!navigationSuccessful) {
+          throw new Error('Failed to navigate to order list after retries');
         }
 
         // Wait for table to be visible
@@ -381,251 +461,316 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           
           return Array.from(rows).map(row => ({
             orderId: row.querySelector('td:nth-child(1)')?.textContent?.trim() || '',
-            status: row.querySelector('td:nth-child(3)')?.textContent?.trim() || ''
+            status: row.querySelector('td:nth-child(3)')?.textContent?.trim() || '',
+            orderTime: row.querySelector('td:nth-child(2)')?.textContent?.trim() || ''
           })).filter(order => order.orderId !== '');
         });
 
+        // Sort orders by time to process newest first
+        const sortedOrders = currentOrders.sort((a, b) => {
+          const timeA = new Date(a.orderTime).getTime();
+          const timeB = new Date(b.orderTime).getTime();
+          return timeB - timeA;
+        });
+
+        let foundNewOrders = false;
+
         // Process only new orders
-        for (const { orderId } of currentOrders) {
+        for (const { orderId } of sortedOrders) {
           if (!orderId || processedOrderIds.has(orderId)) continue;
 
-          try {
-            await monitoringPage.click(`text=${orderId}`);
-            await monitoringPage.waitForLoadState('networkidle');
-            await monitoringPage.waitForSelector('dl', { state: 'visible', timeout: 15000 });
+          foundNewOrders = true;
+          let orderProcessed = false;
+          let retryCount = 0;
 
-            const orderDetails = await monitoringPage.evaluate(() => {
-              const findValueByLabel = (labelText: string): string => {
-                // Try finding in dl/dt/dd structure
-                const dlElements = document.querySelectorAll('dl');
-                for (const dl of dlElements) {
-                  const dt = dl.querySelector('dt');
-                  const dd = dl.querySelector('dd');
-                  if (dt?.textContent?.includes(labelText) && dd) {
-                    return dd.textContent?.trim() || '';
+          while (!orderProcessed && retryCount < 3 && isMonitoringActive) {
+            try {
+              await monitoringPage.click(`text=${orderId}`);
+              await monitoringPage.waitForLoadState('networkidle');
+              await monitoringPage.waitForSelector('dl', { state: 'visible', timeout: 15000 });
+
+              const orderDetails = await monitoringPage.evaluate(() => {
+                const findValueByLabel = (labelText: string): string => {
+                  // Try finding in dl/dt/dd structure
+                  const dlElements = document.querySelectorAll('dl');
+                  for (const dl of dlElements) {
+                    const dt = dl.querySelector('dt');
+                    const dd = dl.querySelector('dd');
+                    if (dt?.textContent?.includes(labelText) && dd) {
+                      return dd.textContent?.trim() || '';
+                    }
                   }
-                }
 
-                // Try finding in table structure
-                const tables = document.querySelectorAll('table');
-                for (const table of tables) {
-                  const rows = table.querySelectorAll('tr');
-                  for (const row of rows) {
-                    const cells = row.querySelectorAll('td, th');
-                    for (const cell of cells) {
-                      if (cell.textContent?.includes(labelText)) {
-                        const nextCell = cell.nextElementSibling;
-                        if (nextCell) {
-                          return nextCell.textContent?.trim() || '';
+                  // Try finding in table structure
+                  const tables = document.querySelectorAll('table');
+                  for (const table of tables) {
+                    const rows = table.querySelectorAll('tr');
+                    for (const row of rows) {
+                      const cells = row.querySelectorAll('td, th');
+                      for (const cell of cells) {
+                        if (cell.textContent?.includes(labelText)) {
+                          const nextCell = cell.nextElementSibling;
+                          if (nextCell) {
+                            return nextCell.textContent?.trim() || '';
+                          }
                         }
                       }
                     }
                   }
-                }
 
-                // Try finding in dt/dd pairs
-                const allDts = document.querySelectorAll('dt');
-                for (const dt of allDts) {
-                  if (dt.textContent?.includes(labelText)) {
-                    const nextElement = dt.nextElementSibling;
-                    if (nextElement?.tagName.toLowerCase() === 'dd') {
-                      return nextElement.textContent?.trim() || '';
+                  // Try finding in dt/dd pairs
+                  const allDts = document.querySelectorAll('dt');
+                  for (const dt of allDts) {
+                    if (dt.textContent?.includes(labelText)) {
+                      const nextElement = dt.nextElementSibling;
+                      if (nextElement?.tagName.toLowerCase() === 'dd') {
+                        return nextElement.textContent?.trim() || '';
+                      }
                     }
                   }
-                }
 
-                // Try finding in any element with specific text content
-                const elements = document.querySelectorAll('*');
-                for (const element of elements) {
-                  if (element.textContent?.includes(labelText)) {
-                    const parent = element.parentElement;
-                    if (parent) {
-                      return parent.textContent?.replace(labelText, '').trim() || '';
+                  // Try finding in any element with specific text content
+                  const elements = document.querySelectorAll('*');
+                  for (const element of elements) {
+                    if (element.textContent?.includes(labelText)) {
+                      const parent = element.parentElement;
+                      if (parent) {
+                        return parent.textContent?.replace(labelText, '').trim() || '';
+                      }
                     }
                   }
-                }
 
-                return '';
-              };
+                  return '';
+                };
 
-              // Extract price information
-              let total = 0;
-              
-              // First find the items section
-              const itemsFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
-                el.textContent?.includes('商品情報') || 
-                el.textContent?.includes('注文商品')
-              );
-
-              if (itemsFieldset) {
-                // Get all divs in the fieldset
-                const allDivs = Array.from(itemsFieldset.querySelectorAll('div'));
+                // Extract price information
+                let total = 0;
                 
-                // Look for the last occurrence of '合計'
-                for (let i = allDivs.length - 1; i >= 0; i--) {
-                  const div = allDivs[i];
-                  const text = div.textContent || '';
-                  
-                  if (text.includes('合計')) {
-                    const match = text.match(/[¥￥]([0-9,]+)/);
-                    if (match) {
-                      total = parseInt(match[1].replace(/,/g, ''));
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              // If still not found, try the old method as fallback
-              if (total === 0) {
-                const elements = document.querySelectorAll('*');
-                for (const el of elements) {
-                  if (el.textContent?.includes('合計')) {
-                    const text = el.textContent;
-                    const match = text.match(/[¥￥]([0-9,]+)/);
-                    if (match) {
-                      total = parseInt(match[1].replace(/,/g, ''));
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              // Get items information
-              let items = '';
-              let hasUtensils = false;
-              let notes = '';  // Add notes variable
-              
-              // Extract notes from 備考 fieldset
-              const remarkFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
-                el.textContent?.includes('備考')
-              );
-              
-              if (remarkFieldset) {
-                const remarkContent = remarkFieldset.textContent || '';
-                notes = remarkContent.replace('備考', '').trim();
-              }
+                // First find the items section
+                const itemsFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
+                  el.textContent?.includes('商品情報') || 
+                  el.textContent?.includes('注文商品')
+                );
 
-              // If notes not found in fieldset, try finding in other elements
-              if (!notes) {
-                const remarkElements = Array.from(document.querySelectorAll('*')).filter(el => 
+                if (itemsFieldset) {
+                  // Get all divs in the fieldset
+                  const allDivs = Array.from(itemsFieldset.querySelectorAll('div'));
+                  
+                  // Look for the last occurrence of '合計'
+                  for (let i = allDivs.length - 1; i >= 0; i--) {
+                    const div = allDivs[i];
+                    const text = div.textContent || '';
+                    
+                    if (text.includes('合計')) {
+                      const match = text.match(/[¥￥]([0-9,]+)/);
+                      if (match) {
+                        total = parseInt(match[1].replace(/,/g, ''));
+                        break;
+                      }
+                    }
+                  }
+                }
+                
+                // If still not found, try the old method as fallback
+                if (total === 0) {
+                  const elements = document.querySelectorAll('*');
+                  for (const el of elements) {
+                    if (el.textContent?.includes('合計')) {
+                      const text = el.textContent;
+                      const match = text.match(/[¥￥]([0-9,]+)/);
+                      if (match) {
+                        total = parseInt(match[1].replace(/,/g, ''));
+                        break;
+                      }
+                    }
+                  }
+                }
+                
+                // Get items information
+                let items = '';
+                let hasUtensils = false;
+                let notes = '';  // Add notes variable
+                
+                // Extract notes from 備考 fieldset
+                const remarkFieldset = Array.from(document.querySelectorAll('fieldset')).find(el => 
                   el.textContent?.includes('備考')
                 );
                 
-                for (const el of remarkElements) {
-                  const parent = el.parentElement;
-                  if (parent && parent.textContent) {
-                    notes = parent.textContent.replace('備考', '').trim();
-                    if (notes) break;
+                if (remarkFieldset) {
+                  const remarkContent = remarkFieldset.textContent || '';
+                  notes = remarkContent.replace('備考', '').trim();
+                }
+
+                // If notes not found in fieldset, try finding in other elements
+                if (!notes) {
+                  const remarkElements = Array.from(document.querySelectorAll('*')).filter(el => 
+                    el.textContent?.includes('備考')
+                  );
+                  
+                  for (const el of remarkElements) {
+                    const parent = el.parentElement;
+                    if (parent && parent.textContent) {
+                      notes = parent.textContent.replace('備考', '').trim();
+                      if (notes) break;
+                    }
                   }
                 }
-              }
 
-              // Try to find utensils in the order items table first
-              const orderItemsTable = document.querySelector('table.orderItemList');
-              if (orderItemsTable) {
-                const tableText = orderItemsTable.textContent || '';
-                if (tableText.includes('箸、スプーン、おしぼり等／Utensils') || 
-                    tableText.includes('箸、スプーン、おしぼり等') ||
-                    tableText.includes('Utensils')) {
-                  hasUtensils = true;
-                }
-              }
-
-              // If not found in table, try all elements
-              if (!hasUtensils) {
-                const allElements = document.querySelectorAll('*');
-                for (const el of allElements) {
-                  const text = el.textContent || '';
-                  if (text.includes('箸、スプーン、おしぼり等／Utensils') || 
-                      text.includes('箸、スプーン、おしぼり等') ||
-                      text.includes('Utensils')) {
+                // Try to find utensils in the order items table first
+                const orderItemsTable = document.querySelector('table.orderItemList');
+                if (orderItemsTable) {
+                  const tableText = orderItemsTable.textContent || '';
+                  if (tableText.includes('箸、スプーン、おしぼり等／Utensils') || 
+                      tableText.includes('箸、スプーン、おしぼり等') ||
+                      tableText.includes('Utensils')) {
                     hasUtensils = true;
-                    break;
+                  }
+                }
+
+                // If not found in table, try all elements
+                if (!hasUtensils) {
+                  const allElements = document.querySelectorAll('*');
+                  for (const el of allElements) {
+                    const text = el.textContent || '';
+                    if (text.includes('箸、スプーン、おしぼり等／Utensils') || 
+                        text.includes('箸、スプーン、おしぼり等') ||
+                        text.includes('Utensils')) {
+                      hasUtensils = true;
+                      break;
+                    }
+                  }
+                }
+
+                // Get the items information
+                const itemsSection = Array.from(document.querySelectorAll('*')).find(el => 
+                  el.textContent?.includes('商品情報') || 
+                  el.textContent?.includes('注文商品')
+                );
+                
+                if (itemsSection) {
+                  // Get the parent container that might contain the items list
+                  const container = itemsSection.closest('dl, div, section');
+                  if (container) {
+                    items = container.textContent || '';
+                    // Clean up the text
+                    items = items.replace('商品情報', '').replace('注文商品', '').trim();
+                  }
+                }
+
+                // If not found, try the general search
+                if (!items) {
+                  items = findValueByLabel('商品情報') || findValueByLabel('注文商品') || '';
+                }
+
+                // If utensils were found, make sure they're included in the items text
+                if (hasUtensils && !items.includes('箸、スプーン、おしぼり等／Utensils')) {
+                  items = items + ' 箸、スプーン、おしぼり等／Utensils';
+                }
+
+                return {
+                  orderId: findValueByLabel('注文ID'),
+                  orderTime: findValueByLabel('注文日時'),
+                  deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
+                  paymentMethod: findValueByLabel('支払方法'),
+                  visitCount: findValueByLabel('店舗利用回数'),
+                  customerName: findValueByLabel('注文者氏名'),
+                  customerPhone: findValueByLabel('注文者電話番号'),
+                  receiptName: findValueByLabel('領収書宛名'),
+                  waitingTime: findValueByLabel('受付時の待ち時間'),
+                  address: findValueByLabel('配達先住所'),
+                  items: items,
+                  totalAmount: total,
+                  status,
+                  notes: notes  // Add notes to the returned object
+                };
+              });
+
+              if (orderDetails.orderId) {
+                processedOrderIds.add(orderDetails.orderId);
+                console.log('Processing order:', orderDetails.orderId);
+                onNewOrders([orderDetails]);
+                orderProcessed = true;
+              }
+
+              // Return to order list with retries
+              let navRetryCount = 0;
+              while (navRetryCount < 3) {
+                try {
+                  await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                    waitUntil: 'networkidle',
+                    timeout: 30000
+                  });
+                  break;
+                } catch (navError) {
+                  console.error(`Navigation retry ${navRetryCount + 1} failed:`, navError);
+                  navRetryCount++;
+                  if (navRetryCount < 3) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                   }
                 }
               }
-
-              // Get the items information
-              const itemsSection = Array.from(document.querySelectorAll('*')).find(el => 
-                el.textContent?.includes('商品情報') || 
-                el.textContent?.includes('注文商品')
-              );
-              
-              if (itemsSection) {
-                // Get the parent container that might contain the items list
-                const container = itemsSection.closest('dl, div, section');
-                if (container) {
-                  items = container.textContent || '';
-                  // Clean up the text
-                  items = items.replace('商品情報', '').replace('注文商品', '').trim();
-                }
+            } catch (error) {
+              console.error(`Error processing order (attempt ${retryCount + 1}):`, orderId, error);
+              retryCount++;
+              if (retryCount < 3) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
               }
-
-              // If not found, try the general search
-              if (!items) {
-                items = findValueByLabel('商品情報') || findValueByLabel('注文商品') || '';
-              }
-
-              // If utensils were found, make sure they're included in the items text
-              if (hasUtensils && !items.includes('箸、スプーン、おしぼり等／Utensils')) {
-                items = items + ' 箸、スプーン、おしぼり等／Utensils';
-              }
-
-              return {
-                orderId: findValueByLabel('注文ID'),
-                orderTime: findValueByLabel('注文日時'),
-                deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
-                paymentMethod: findValueByLabel('支払方法'),
-                visitCount: findValueByLabel('店舗利用回数'),
-                customerName: findValueByLabel('注文者氏名'),
-                customerPhone: findValueByLabel('注文者電話番号'),
-                receiptName: findValueByLabel('領収書宛名'),
-                waitingTime: findValueByLabel('受付時の待ち時間'),
-                address: findValueByLabel('配達先住所'),
-                items: items,
-                totalAmount: total,
-                status,
-                notes: notes  // Add notes to the returned object
-              };
-            });
-
-            if (orderDetails.orderId) {
-              processedOrderIds.add(orderDetails.orderId);
-              console.log('Processed new order:', orderDetails.orderId);
-              onNewOrders([orderDetails]);
             }
-
-            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-              waitUntil: 'networkidle',
-              timeout: 30000
-            });
-          } catch (error) {
-            console.error('Error processing order:', orderId, error);
-            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-              waitUntil: 'networkidle',
-              timeout: 30000
-            });
           }
         }
 
-        // Always wait before next check, even if no orders found
-        console.log('Waiting for new orders...');
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+        // If no new orders were found, wait before next check
+        if (!foundNewOrders) {
+          console.log('No new orders found, waiting...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+
+        // Verify we're still on the order list page before refreshing
+        if (monitoringPage.url().includes('order-list')) {
+          try {
+            await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+          } catch (error) {
+            console.error('Error refreshing page, will retry on next iteration:', error);
+          }
+        }
 
       } catch (error) {
         console.error('Error in monitoring loop:', error);
-        if (!monitoringBrowser?.isConnected() || !monitoringPage || monitoringPage.isClosed()) {
-          isMonitoringActive = false;
-          break;
+        consecutiveErrors++;
+        
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          console.error(`Too many consecutive errors (${consecutiveErrors}), attempting to restart monitoring...`);
+          // Try to clean up and restart
+          try {
+            if (monitoringPage && !monitoringPage.isClosed()) {
+              await monitoringPage.close();
+            }
+            monitoringPage = await monitoringBrowser?.newPage();
+            if (monitoringPage) {
+              await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                waitUntil: 'networkidle',
+                timeout: 30000
+              });
+              if (await checkAndRefreshSession(monitoringPage, email, password)) {
+                consecutiveErrors = 0;
+                console.log('Successfully restarted monitoring');
+                continue;
+              }
+            }
+          } catch (restartError) {
+            console.error('Failed to restart monitoring:', restartError);
+          }
         }
+        
+        // Wait before retrying
         await new Promise(resolve => setTimeout(resolve, 3000));
+        continue;
       }
     }
 
-    // Only stop monitoring if explicitly requested
+    // Only stop monitoring if explicitly requested via stopOrderMonitoring()
     if (!isMonitoringActive) {
+      console.log('Monitoring was explicitly stopped');
       await stopOrderMonitoring();
       return { success: false, monitoring: false, existing: false };
     }
