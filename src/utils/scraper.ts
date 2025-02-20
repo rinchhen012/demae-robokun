@@ -612,7 +612,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
         // Always wait before next check, even if no orders found
         console.log('Waiting for new orders...');
         await new Promise(resolve => setTimeout(resolve, 3000));
-        await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+        await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
 
       } catch (error) {
         console.error('Error in monitoring loop:', error);
