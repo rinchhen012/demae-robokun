@@ -437,36 +437,59 @@ export async function startOrderMonitoring(email: string, password: string, onNe
     // Start monitoring loop for new orders
     while (isMonitoringActive) {
       try {
-        // Reset consecutive errors on successful iteration
-        consecutiveErrors = 0;
-
-        // Check browser and page status
+        // Check if browser is still connected
         if (!monitoringBrowser?.isConnected()) {
-          console.error('Browser disconnected, attempting to reconnect...');
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          continue;
+          console.error('Browser disconnected, attempting to recreate...');
+          try {
+            monitoringBrowser = await chromium.launch({ 
+              headless: false,
+              slowMo: 200
+            });
+            monitoringPage = await monitoringBrowser.newPage();
+            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
+            await monitoringPage.click('button:has-text("メールアドレス")');
+            const emailLoginForm = monitoringPage.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+            await emailLoginForm.locator('input[type="email"]').fill(email);
+            await emailLoginForm.locator('input[type="password"]').fill(password);
+            await monitoringPage.click('button:has-text("ログイン")');
+            await monitoringPage.waitForNavigation({ waitUntil: 'networkidle' });
+            console.log('Successfully recreated browser and logged in');
+            continue;
+          } catch (error) {
+            console.error('Failed to recreate browser:', error);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            continue;
+          }
         }
 
+        // Check if page is still available
         if (!monitoringPage || monitoringPage.isClosed()) {
           console.error('Page unavailable, attempting to recreate...');
           try {
             monitoringPage = await monitoringBrowser.newPage();
-            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-              waitUntil: 'networkidle',
-              timeout: 30000
-            });
-            
-            // Check and refresh session after recreating page
-            if (!await checkAndRefreshSession(monitoringPage, email, password)) {
-              throw new Error('Failed to establish session after recreating page');
-            }
-            
+            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
+            await monitoringPage.click('button:has-text("メールアドレス")');
+            const emailLoginForm = monitoringPage.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+            await emailLoginForm.locator('input[type="email"]').fill(email);
+            await emailLoginForm.locator('input[type="password"]').fill(password);
+            await monitoringPage.click('button:has-text("ログイン")');
+            await monitoringPage.waitForNavigation({ waitUntil: 'networkidle' });
+            console.log('Successfully recreated page and logged in');
             continue;
           } catch (error) {
             console.error('Failed to recreate page:', error);
             await new Promise(resolve => setTimeout(resolve, 5000));
             continue;
           }
+        }
+
+        // Verify page is still connected before any operations
+        try {
+          await monitoringPage.evaluate(() => document.title);
+        } catch (error) {
+          console.error('Page disconnected, will attempt to recreate on next iteration');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
         }
 
         // Check and refresh session periodically
@@ -639,9 +662,24 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
           while (!orderProcessed && retryCount < 3 && isMonitoringActive) {
             try {
+              // Click the order ID and wait for navigation
               await monitoringPage.click(`text=${orderId}`);
-              await monitoringPage.waitForLoadState('networkidle');
-              await monitoringPage.waitForSelector('dl', { state: 'visible', timeout: 15000 });
+              
+              // Wait for navigation and content to load with increased timeouts
+              await monitoringPage.waitForLoadState('networkidle', { timeout: 30000 });
+              await monitoringPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+              
+              // Wait for key elements with increased timeout
+              await monitoringPage.waitForSelector('dl', { state: 'visible', timeout: 30000 });
+              
+              // Additional wait for dynamic content
+              await monitoringPage.waitForFunction(() => {
+                const dts = document.querySelectorAll('dt');
+                return Array.from(dts).some(dt => dt.textContent?.includes('注文ID'));
+              }, { timeout: 30000 });
+
+              // Extra wait to ensure all content is loaded
+              await monitoringPage.waitForTimeout(2000);
 
               const orderDetails = await monitoringPage.evaluate(() => {
                 const findValueByLabel = (labelText: string): string => {
@@ -844,9 +882,12 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                 console.log('Processing order:', orderDetails.orderId);
                 onNewOrders([orderDetails]);
                 orderProcessed = true;
+
+                // Wait before navigating back
+                await monitoringPage.waitForTimeout(2000);
               }
 
-              // Return to order list with retries
+              // Return to order list with retries and increased timeouts
               let navRetryCount = 0;
               while (navRetryCount < 3) {
                 try {
@@ -854,12 +895,22 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                     waitUntil: 'networkidle',
                     timeout: 30000
                   });
-                  break;
+                  
+                  // Wait for the order list page to load completely
+                  await monitoringPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                  await monitoringPage.waitForTimeout(2000);
+                  
+                  // Verify we're actually on the order list page
+                  const currentUrl = await monitoringPage.evaluate(() => window.location.href);
+                  if (currentUrl.includes('order-list')) {
+                    break;
+                  }
+                  throw new Error('Navigation did not reach order list page');
                 } catch (navError) {
                   console.error(`Navigation retry ${navRetryCount + 1} failed:`, navError);
                   navRetryCount++;
                   if (navRetryCount < 3) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await monitoringPage.waitForTimeout(3000);
                   }
                 }
               }
@@ -867,25 +918,37 @@ export async function startOrderMonitoring(email: string, password: string, onNe
               console.error(`Error processing order (attempt ${retryCount + 1}):`, orderId, error);
               retryCount++;
               if (retryCount < 3) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await monitoringPage.waitForTimeout(3000);
               }
             }
           }
         }
 
-        // If no new orders were found, wait before next check
+        // If no new orders were found, wait longer before next check
         if (!foundNewOrders) {
           console.log('No new orders found, waiting...');
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          await monitoringPage.waitForTimeout(5000);
         }
 
-        // Verify we're still on the order list page before refreshing
-        if (monitoringPage.url().includes('order-list')) {
-          try {
-            await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
-          } catch (error) {
-            console.error('Error refreshing page, will retry on next iteration:', error);
+        // Verify page is still connected before refreshing
+        try {
+          const currentUrl = await monitoringPage.evaluate(() => window.location.href);
+          if (currentUrl.includes('order-list')) {
+            try {
+              // Wait before refreshing
+              await monitoringPage.waitForTimeout(2000);
+              await monitoringPage.reload({ waitUntil: 'networkidle', timeout: 30000 });
+              // Wait after refreshing
+              await monitoringPage.waitForTimeout(2000);
+            } catch (error) {
+              console.error('Error refreshing page:', error);
+              // Don't throw, just continue to next iteration
+            }
           }
+        } catch (error) {
+          console.error('Error checking page URL:', error);
+          // Don't throw, just continue to next iteration
+          continue;
         }
 
       } catch (error) {
@@ -893,31 +956,38 @@ export async function startOrderMonitoring(email: string, password: string, onNe
         consecutiveErrors++;
         
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          console.error(`Too many consecutive errors (${consecutiveErrors}), attempting to restart monitoring...`);
-          // Try to clean up and restart
+          console.error(`Too many consecutive errors (${consecutiveErrors}), attempting full restart...`);
           try {
-            if (monitoringPage && !monitoringPage.isClosed()) {
-              await monitoringPage.close();
+            // Close existing browser if it exists
+            if (monitoringBrowser?.isConnected()) {
+              await monitoringBrowser.close();
             }
-            monitoringPage = await monitoringBrowser?.newPage();
-            if (monitoringPage) {
-              await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
-                waitUntil: 'networkidle',
-                timeout: 30000
-              });
-              if (await checkAndRefreshSession(monitoringPage, email, password)) {
-                consecutiveErrors = 0;
-                console.log('Successfully restarted monitoring');
-                continue;
-              }
-            }
+            
+            // Create new browser and page
+            monitoringBrowser = await chromium.launch({ 
+              headless: false,
+              slowMo: 200
+            });
+            monitoringPage = await monitoringBrowser.newPage();
+            
+            // Log in again
+            await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
+            await monitoringPage.click('button:has-text("メールアドレス")');
+            const emailLoginForm = monitoringPage.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+            await emailLoginForm.locator('input[type="email"]').fill(email);
+            await emailLoginForm.locator('input[type="password"]').fill(password);
+            await monitoringPage.click('button:has-text("ログイン")');
+            await monitoringPage.waitForNavigation({ waitUntil: 'networkidle' });
+            
+            consecutiveErrors = 0;
+            console.log('Successfully performed full restart');
           } catch (restartError) {
-            console.error('Failed to restart monitoring:', restartError);
+            console.error('Failed to perform full restart:', restartError);
           }
         }
         
         // Wait before retrying
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
         continue;
       }
     }
