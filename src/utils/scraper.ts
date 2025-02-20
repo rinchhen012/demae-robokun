@@ -136,16 +136,64 @@ export async function startOrderMonitoring(email: string, password: string, onNe
     // Process all existing orders first
     console.log('Processing existing orders...');
     try {
-      await monitoringPage.waitForSelector('.Table_table__RdwIW', { timeout: 5000 });
-      
+      // Wait for table using more reliable selectors
+      console.log('Waiting for order table...');
+      await monitoringPage.waitForSelector('table:has(tr:has(td:nth-child(1):has-text("注文ID/受取用番号"))), table:has(tr:has(th:has-text("注文ID/受取用番号"))), table[role="grid"]', { timeout: 5000 }).catch(() => {
+        console.log('Table selector timeout, will try alternative methods');
+      });
+
+      // Debug: Log all tables on the page
+      const tableDebug = await monitoringPage.evaluate(() => {
+        const tables = document.querySelectorAll('table');
+        return Array.from(tables).map(table => ({
+          text: table.textContent?.trim(),
+          role: table.getAttribute('role'),
+          headers: Array.from(table.querySelectorAll('th, td')).map(cell => cell.textContent?.trim())
+        }));
+      });
+      console.log('Found tables on page:', tableDebug);
+
       // Get all existing orders first
       const existingOrders = await monitoringPage.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('.Table_table__RdwIW tbody tr'));
-        return rows.map(row => ({
-          orderId: row.querySelector('td:nth-child(1)')?.textContent?.trim() || '',
-          status: row.querySelector('td:nth-child(3)')?.textContent?.trim() || '',
-          index: Array.from(row.parentElement?.children || []).indexOf(row)
-        })).filter(order => order.orderId !== '');
+        // Try multiple selectors to find the table
+        const table = document.querySelector('table:has(tr:has(td:has-text("注文ID/受取用番号")))') || 
+                      document.querySelector('table:has(tr:has(th:has-text("注文ID/受取用番号")))') ||
+                      document.querySelector('table[role="grid"]') ||
+                      Array.from(document.querySelectorAll('table')).find(table => {
+                        const headerText = table.textContent || '';
+                        return headerText.includes('注文ID/受取用番号') || headerText.includes('注文ID');
+                      });
+
+        if (!table) {
+          console.log('No table found with order ID header');
+          return [];
+        }
+
+        console.log('Found table with content:', table.textContent);
+        
+        // Find tbody - if not found, use table directly
+        const tbody = table.querySelector('tbody') || table;
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        console.log(`Found ${rows.length} rows in table`);
+        
+        return rows
+          .filter(row => {
+            const cells = row.querySelectorAll('td');
+            const firstCell = cells[0]?.textContent?.trim();
+            const isHeader = firstCell?.includes('注文ID') || firstCell?.includes('受取用番号');
+            return cells.length >= 3 && firstCell && !isHeader;
+          })
+          .map(row => {
+            const cells = row.querySelectorAll('td');
+            const data = {
+              orderId: cells[0]?.textContent?.trim() || '',
+              status: cells[2]?.textContent?.trim() || '',
+              index: Array.from(tbody.children).indexOf(row)
+            };
+            console.log('Mapped row data:', data);
+            return data;
+          })
+          .filter(order => order.orderId !== '');
       });
 
       console.log(`Found ${existingOrders.length} existing orders`);
@@ -451,19 +499,125 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           throw new Error('Failed to navigate to order list after retries');
         }
 
-        // Wait for table to be visible
-        await monitoringPage.waitForSelector('.Table_table__RdwIW', { timeout: 5000 }).catch(() => {});
+        // Wait for table to be visible with more reliable selectors
+        await monitoringPage.waitForSelector('table:has(tr:has(td:nth-child(1):has-text("注文ID/受取用番号"))), table:has(tr:has(th:has-text("注文ID/受取用番号"))), table[role="grid"]', { timeout: 5000 }).catch(() => {});
 
-        // Get current orders
+        // Get current orders with improved table selection
         const currentOrders = await monitoringPage.evaluate(() => {
-          const rows = document.querySelectorAll('.Table_table__RdwIW tbody tr');
-          if (!rows.length) return [];
+          // Debug: Log all tables and their content
+          const allTables = document.querySelectorAll('table');
+          console.log(`Found ${allTables.length} tables on page`);
+          allTables.forEach((table, index) => {
+            console.log(`Table ${index + 1} content:`, {
+              text: table.textContent,
+              headers: Array.from(table.querySelectorAll('th, td')).map(cell => cell.textContent?.trim()),
+              rows: table.querySelectorAll('tr').length
+            });
+          });
+
+          // Try multiple strategies to find the table
+          let table = null;
           
-          return Array.from(rows).map(row => ({
-            orderId: row.querySelector('td:nth-child(1)')?.textContent?.trim() || '',
-            status: row.querySelector('td:nth-child(3)')?.textContent?.trim() || '',
-            orderTime: row.querySelector('td:nth-child(2)')?.textContent?.trim() || ''
-          })).filter(order => order.orderId !== '');
+          // Strategy 1: Look for specific header content
+          const headerTexts = [
+            'お客様情報',
+            '店舗/注文したサイト',
+            '注文/配達テイクアウト日時',
+            '加盟店の売上/お客様への請求額',
+            '申請ステータス'
+          ];
+          
+          // Find all tables and check their headers
+          const tables = Array.from(document.querySelectorAll('table'));
+          for (const currentTable of tables) {
+            const headers = Array.from(currentTable.querySelectorAll('th, td'));
+            for (const header of headers) {
+              const headerText = header.textContent?.trim() || '';
+              if (headerTexts.some(text => headerText.includes(text))) {
+                table = currentTable;
+                console.log('Found table with header:', headerText);
+                break;
+              }
+            }
+            if (table) break;
+          }
+
+          // Strategy 2: Check table content for multiple headers
+          if (!table) {
+            table = tables.find(t => {
+              const content = t.textContent || '';
+              return headerTexts.some(header => content.includes(header));
+            });
+            if (table) console.log('Found table using content check');
+          }
+
+          // Strategy 3: Role-based + content check
+          if (!table) {
+            table = Array.from(document.querySelectorAll('table[role="grid"]')).find(t => {
+              const content = t.textContent || '';
+              return headerTexts.some(header => content.includes(header));
+            });
+            if (table) console.log('Found table using role and content check');
+          }
+
+          if (!table) {
+            console.log('No order table found after trying all strategies');
+            return [];
+          }
+
+          console.log('Found table with content:', {
+            text: table.textContent,
+            headers: Array.from(table.querySelectorAll('th, td')).map(cell => cell.textContent?.trim()),
+            rows: table.querySelectorAll('tr').length
+          });
+
+          const tbody = table.querySelector('tbody') || table;
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          console.log(`Found ${rows.length} total rows in table`);
+
+          // Process rows with better filtering
+          const processedRows = rows
+            .filter(row => {
+              const cells = row.querySelectorAll('td');
+              if (cells.length < 3) {
+                console.log('Filtered out row: insufficient cells');
+                return false;
+              }
+
+              const firstCell = cells[0]?.textContent?.trim() || '';
+              if (!firstCell) {
+                console.log('Filtered out row: empty first cell');
+                return false;
+              }
+
+              // Check if it's a header row by looking for any of the header texts
+              if (headerTexts.some(header => firstCell.includes(header))) {
+                console.log('Filtered out row: header row');
+                return false;
+              }
+
+              return true;
+            })
+            .map(row => {
+              const cells = row.querySelectorAll('td');
+              const data = {
+                orderId: cells[0]?.textContent?.trim() || '',
+                status: cells[2]?.textContent?.trim() || '',
+                orderTime: cells[1]?.textContent?.trim() || ''
+              };
+              console.log('Processed row:', data);
+              return data;
+            })
+            .filter(order => {
+              if (!order.orderId) {
+                console.log('Filtered out order: missing orderId');
+                return false;
+              }
+              return true;
+            });
+
+          console.log(`Processed ${processedRows.length} valid order rows`);
+          return processedRows;
         });
 
         // Sort orders by time to process newest first
@@ -856,14 +1010,15 @@ export async function scrapeOrders(email: string, password: string) {
         waitUntil: 'networkidle'
       });
       
-      // Wait for either the table or the no-orders message
+      console.log('Waiting for order list page to load...');
+      // Wait for either the table or the no-orders message with improved selectors
       try {
         await Promise.race([
-          page.waitForSelector('.Table_table__RdwIW', { timeout: 5000 }),
+          page.waitForSelector('table:has(tr:has(td:has-text("注文ID/受取用番号"))), table:has(tr:has(th:has-text("注文ID/受取用番号"))), table[role="grid"]', { timeout: 5000 }),
           page.waitForSelector('text=/注文がありません|No orders found/', { timeout: 5000 })
         ]);
       } catch {
-        // If neither is found after timeout, throw error
+        console.log('Neither table nor no-orders message found');
         throw new Error('No orders');
       }
     }
@@ -871,8 +1026,28 @@ export async function scrapeOrders(email: string, password: string) {
     // Initial navigation to orders page
     await goToOrderList();
     
-    // Check if there are any orders
-    const hasOrders = await page.$('.Table_table__RdwIW');
+    // Check if there are any orders with improved selectors
+    const hasOrders = await page.evaluate(() => {
+      const tables = document.querySelectorAll('table');
+      console.log(`Found ${tables.length} tables on page`);
+      
+      const table = document.querySelector('table:has(tr:has(td:has-text("注文ID/受取用番号")))') || 
+                    document.querySelector('table:has(tr:has(th:has-text("注文ID/受取用番号")))') ||
+                    document.querySelector('table[role="grid"]') ||
+                    Array.from(tables).find(table => {
+                      const headerText = table.textContent || '';
+                      return headerText.includes('注文ID/受取用番号') || headerText.includes('注文ID');
+                    });
+      
+      if (table) {
+        console.log('Found order table with content:', table.textContent);
+      } else {
+        console.log('No order table found');
+      }
+      
+      return !!table;
+    });
+
     if (!hasOrders) {
       await browser.close();
       return { 
@@ -881,12 +1056,29 @@ export async function scrapeOrders(email: string, password: string) {
       };
     }
     
-    // Get all rows and their data
+    // Get all rows and their data with improved selection
     const orderRows = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('.Table_table__RdwIW tbody tr'));
-      return rows.map(row => ({
-        status: row.querySelector('td:nth-child(3)')?.textContent?.trim() || '',
-        index: Array.from(row.parentElement?.children || []).indexOf(row)
+      const table = document.querySelector('table:has(tr:has(td:nth-child(1):has-text("注文ID/受取用番号")))') || 
+                    document.querySelector('table:has(tr:has(th:has-text("注文ID/受取用番号")))') ||
+                    document.querySelector('table[role="grid"]') ||
+                    Array.from(document.querySelectorAll('table')).find(table => 
+                      table.textContent?.includes('注文ID/受取用番号') && 
+                      table.textContent?.includes('注文日時')
+                    );
+      if (!table) return [];
+      
+      const tbody = table.querySelector('tbody') || table;
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      
+      return rows
+        .filter(row => {
+          const cells = row.querySelectorAll('td');
+          const firstCell = cells[0]?.textContent?.trim();
+          return cells.length >= 3 && firstCell && !firstCell.includes('注文ID');
+        })
+        .map(row => ({
+          status: row.querySelectorAll('td')[2]?.textContent?.trim() || '',
+          index: Array.from(tbody.children).indexOf(row)
       }));
     });
 
@@ -894,13 +1086,13 @@ export async function scrapeOrders(email: string, password: string) {
     for (const { status, index } of orderRows) {
       try {
         // Make sure we're on the order list page
-        const isOnOrderList = await page.$('.Table_table__RdwIW');
+        const isOnOrderList = await page.$('table[role="grid"], table:has(tr:has(td:nth-child(1):has-text("注文ID")))');
         if (!isOnOrderList) {
           await goToOrderList();
         }
 
         // Get fresh reference to the row and click it
-        const currentRow = await page.locator('.Table_table__RdwIW tbody tr').nth(index);
+        const currentRow = await page.locator('table[role="grid"] tbody tr, table:has(tr:has(td:nth-child(1):has-text("注文ID"))) tbody tr').nth(index);
         await currentRow.click();
         
         // Wait for navigation and details to load with multiple checks
