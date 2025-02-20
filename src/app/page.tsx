@@ -48,7 +48,7 @@ export default function Home() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [monitoring, setMonitoring] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'delivered'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'delivered'>('active');
   const [storeName, setStoreName] = useState('');
 
   // Function to force a re-render
@@ -466,8 +466,6 @@ export default function Home() {
         return !order.isDelivered;
       case 'delivered':
         return order.isDelivered;
-      default:
-        return true;
     }
   });
 
@@ -586,23 +584,10 @@ export default function Home() {
             <div className="border-b border-gray-200">
               <nav className="-mb-px flex space-x-8">
                 <button
-                  onClick={() => setActiveTab('all')}
-                  className={`${
-                    activeTab === 'all'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                  } whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium transition-colors duration-200`}
-                >
-                  All Orders
-                  <span className="ml-2 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-900">
-                    {orders.length}
-                  </span>
-                </button>
-                <button
                   onClick={() => setActiveTab('active')}
                   className={`${
                     activeTab === 'active'
-                      ? 'border-blue-500 text-blue-600'
+                      ? 'border-green-500 text-green-600'
                       : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                   } whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium transition-colors duration-200`}
                 >
@@ -615,7 +600,7 @@ export default function Home() {
                   onClick={() => setActiveTab('delivered')}
                   className={`${
                     activeTab === 'delivered'
-                      ? 'border-blue-500 text-blue-600'
+                      ? 'border-red-500 text-red-600'
                       : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                   } whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium transition-colors duration-200`}
                 >
