@@ -1,5 +1,7 @@
 import { chromium, Browser, Page } from 'playwright';
 
+const isDocker = process.env.DOCKER === 'true';
+
 interface DetailedOrder {
   orderId: string;
   orderTime: string;
@@ -99,8 +101,9 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
     // Launch new browser
     monitoringBrowser = await chromium.launch({ 
-      headless: false,
-      slowMo: 200
+      headless: isDocker ? true : false,
+      slowMo: 200,
+      args: isDocker ? ['--no-sandbox'] : []
     });
 
     // Create new page
@@ -442,8 +445,9 @@ export async function startOrderMonitoring(email: string, password: string, onNe
           console.error('Browser disconnected, attempting to recreate...');
           try {
             monitoringBrowser = await chromium.launch({ 
-              headless: false,
-              slowMo: 200
+              headless: isDocker ? true : false,
+              slowMo: 200,
+              args: isDocker ? ['--no-sandbox'] : []
             });
             monitoringPage = await monitoringBrowser.newPage();
             await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
@@ -965,8 +969,9 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             
             // Create new browser and page
             monitoringBrowser = await chromium.launch({ 
-              headless: false,
-              slowMo: 200
+              headless: isDocker ? true : false,
+              slowMo: 200,
+              args: isDocker ? ['--no-sandbox'] : []
             });
             monitoringPage = await monitoringBrowser.newPage();
             
@@ -1049,8 +1054,9 @@ export async function stopOrderMonitoring() {
 
 export async function scrapeOrders(email: string, password: string) {
   const browser = await chromium.launch({ 
-    headless: false,
-    slowMo: 200
+    headless: isDocker ? true : false,
+    slowMo: 200,
+    args: isDocker ? ['--no-sandbox'] : []
   });
   const context = await browser.newContext();
   const page = await context.newPage();

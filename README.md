@@ -1,9 +1,8 @@
+---
 
-  ___  ___  ___  ___  _  ___   _ _  _ 
- | _ \/ _ \| _ )/ _ \| |/ / | | | \| |
- |   / (_) | _ \ (_) | ' <| |_| | .` |
- |_|_\\___/|___/\___/|_|\_\\___/|_|\_|
-                                      
+| _ \/ _ \| _ )/ _ \| |/ / | | | \| |
+| / (_) | _ \ (_) | ' <| |_| | .` |
+|_|_\\**_/|_**/\_**/|_|\_\\_**/|\_|\_|
 
 # Demae Robokun - An AI-powered order management system for Demaecan
 
@@ -19,57 +18,60 @@ A web application for automating order management from Demae-can partner portal.
 
 ## Prerequisites
 
-- Node.js 18+ installed
-- npm or yarn package manager
-- A Demae-can partner portal account
-- Docker installed (for Composer Agent)
+- Docker Desktop installed
+- Git installed
 
 ## Setup
 
-### 1. Clone and Install Dependencies
+### Running with Docker (Recommended)
+
+1. Clone the repository:
 
 ```bash
 git clone <repository-url>
 cd demae-robokun
+```
+
+2. Build and start the containers:
+
+```bash
+docker-compose up --build
+```
+
+The application will be available at:
+
+- Local machine: `http://localhost:3000`
+- Other devices: `http://<your-local-ip-address>:3000`
+
+To stop the application:
+
+```bash
+docker-compose down
+```
+
+### Traditional Setup (Alternative)
+
+If you prefer running without Docker, you'll need:
+
+- Node.js 18+ installed
+- npm or yarn package manager
+- A Demae-can partner portal account
+
+#### Installation Steps
+
+1. Install dependencies:
+
+```bash
 npm install
 ```
 
-### 2. Start Composer Agent
-
-#### Windows
-
-```powershell
-# Using PowerShell
-docker run -d -p 3001:3001 --name composer-agent ghcr.io/browser-actions/composer-agent
-
-# If container already exists
-docker start composer-agent
-```
-
-#### Linux
+2. Start Composer Agent:
 
 ```bash
-# Using bash
-sudo docker run -d -p 3001:3001 --name composer-agent ghcr.io/browser-actions/composer-agent
-
-# If container already exists
-sudo docker start composer-agent
+docker run -d -p 3001:3001 --name composer-agent ghcr.io/browser-actions/composer-agent
 ```
 
-### 3. Database Setup
-
-#### Windows
-
-```powershell
-# Remove existing database (if needed)
-Remove-Item -Path prisma/dev.db -ErrorAction SilentlyContinue
-
-# Generate Prisma client and create database
-npx prisma generate
-npx prisma db push
-```
-
-#### Linux
+3. Database Setup:
 
 ```bash
 # Remove existing database (if needed)
@@ -80,26 +82,11 @@ npx prisma generate
 npx prisma db push
 ```
 
-### 4. Start Development Server
-
-#### Windows
-
-```powershell
-# Using PowerShell
-npm run dev -- -H 0.0.0.0
-```
-
-#### Linux
+4. Start Development Server:
 
 ```bash
-# Using bash
 npm run dev -- -H 0.0.0.0
 ```
-
-The application will be available at:
-
-- Local machine: `http://localhost:3000`
-- Other devices: `http://<your-local-ip-address>:3000`
 
 ### Accessing from Other Devices
 
@@ -130,7 +117,22 @@ The application will be available at:
 3. Enter `http://<your-computer-ip>:3000`
    Example: `http://192.168.1.xxx:3000`
 
-#### Troubleshooting Network Access
+### Troubleshooting
+
+#### Docker Issues
+
+1. Make sure Docker Desktop is running
+2. Try rebuilding the containers:
+   ```bash
+   docker-compose down
+   docker-compose up --build
+   ```
+3. Check container logs:
+   ```bash
+   docker-compose logs
+   ```
+
+#### Network Access
 
 1. Check Firewall Settings:
 
@@ -141,30 +143,6 @@ The application will be available at:
    - Ensure both devices are on the same network
    - Some networks (public Wi-Fi) may block device-to-device connections
    - Try temporarily disabling firewall for testing
-
-## Usage
-
-1. Enter your Demae-can partner portal email and password
-2. Click "Fetch Orders" to retrieve the latest orders
-3. Use the action buttons to mark orders as delivered or toggle their active status
-4. The orders table will automatically update to reflect any changes
-
-## Deployment
-
-This application can be deployed for free on Vercel:
-
-1. Create a Vercel account at https://vercel.com
-2. Install Vercel CLI:
-
-```bash
-npm install -g vercel
-```
-
-3. Deploy the application:
-
-```bash
-vercel
-```
 
 ## Development
 
