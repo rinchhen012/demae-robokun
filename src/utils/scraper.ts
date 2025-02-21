@@ -893,7 +893,8 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
               // Return to order list with retries and increased timeouts
               let navRetryCount = 0;
-              while (navRetryCount < 3) {
+              let navigationSuccessful = false;
+              while (navRetryCount < 3 && !navigationSuccessful) {
                 try {
                   await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
                     waitUntil: 'networkidle',
@@ -907,6 +908,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                   // Verify we're actually on the order list page
                   const currentUrl = await monitoringPage.evaluate(() => window.location.href);
                   if (currentUrl.includes('order-list')) {
+                    navigationSuccessful = true;
                     break;
                   }
                   throw new Error('Navigation did not reach order list page');
@@ -915,9 +917,37 @@ export async function startOrderMonitoring(email: string, password: string, onNe
                   navRetryCount++;
                   if (navRetryCount < 3) {
                     await monitoringPage.waitForTimeout(3000);
+                  } else {
+                    // If all retries failed, try to recreate the page
+                    try {
+                      if (monitoringBrowser?.isConnected()) {
+                        monitoringPage = await monitoringBrowser.newPage();
+                        await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
+                        await monitoringPage.click('button:has-text("メールアドレス")');
+                        const emailLoginForm = monitoringPage.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+                        await emailLoginForm.locator('input[type="email"]').fill(email);
+                        await emailLoginForm.locator('input[type="password"]').fill(password);
+                        await monitoringPage.click('button:has-text("ログイン")');
+                        await monitoringPage.waitForNavigation({ waitUntil: 'networkidle' });
+                        await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                          waitUntil: 'networkidle',
+                          timeout: 30000
+                        });
+                        navigationSuccessful = true;
+                      }
+                    } catch (recreateError) {
+                      console.error('Failed to recreate page after navigation failures:', recreateError);
+                    }
                   }
                 }
               }
+              
+              if (!navigationSuccessful) {
+                console.error('Failed to navigate back to order list after multiple retries');
+                // Don't throw, let the monitoring loop handle reconnection
+                continue;
+              }
+
             } catch (error) {
               console.error(`Error processing order (attempt ${retryCount + 1}):`, orderId, error);
               retryCount++;
@@ -931,11 +961,44 @@ export async function startOrderMonitoring(email: string, password: string, onNe
         // If no new orders were found, wait longer before next check
         if (!foundNewOrders) {
           console.log('No new orders found, waiting...');
-          await monitoringPage.waitForTimeout(5000);
+          try {
+            await monitoringPage?.waitForTimeout(5000);
+          } catch (error) {
+            console.error('Error during wait timeout:', error);
+            // Don't throw, just continue to next iteration
+            continue;
+          }
         }
 
         // Verify page is still connected before refreshing
         try {
+          if (!monitoringPage || monitoringPage.isClosed()) {
+            console.error('Page is closed or null, attempting to recreate...');
+            if (monitoringBrowser?.isConnected()) {
+              try {
+                monitoringPage = await monitoringBrowser.newPage();
+                await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/login', { waitUntil: 'networkidle' });
+                await monitoringPage.click('button:has-text("メールアドレス")');
+                const emailLoginForm = monitoringPage.locator('div').filter({ hasText: /^メールアドレスパスワード$/ });
+                await emailLoginForm.locator('input[type="email"]').fill(email);
+                await emailLoginForm.locator('input[type="password"]').fill(password);
+                await monitoringPage.click('button:has-text("ログイン")');
+                await monitoringPage.waitForNavigation({ waitUntil: 'networkidle' });
+                await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                  waitUntil: 'networkidle',
+                  timeout: 30000
+                });
+                console.log('Successfully recreated page');
+                continue;
+              } catch (recreateError) {
+                console.error('Failed to recreate page:', recreateError);
+                // Don't throw, let the monitoring loop handle reconnection
+                continue;
+              }
+            }
+            continue;
+          }
+
           const currentUrl = await monitoringPage.evaluate(() => window.location.href);
           if (currentUrl.includes('order-list')) {
             try {
@@ -947,10 +1010,23 @@ export async function startOrderMonitoring(email: string, password: string, onNe
             } catch (error) {
               console.error('Error refreshing page:', error);
               // Don't throw, just continue to next iteration
+              continue;
+            }
+          } else {
+            console.log('Not on order list page, navigating back...');
+            try {
+              await monitoringPage.goto('https://partner.demae-can.com/merchant-admin/order/order-list', {
+                waitUntil: 'networkidle',
+                timeout: 30000
+              });
+            } catch (error) {
+              console.error('Error navigating back to order list:', error);
+              // Don't throw, just continue to next iteration
+              continue;
             }
           }
         } catch (error) {
-          console.error('Error checking page URL:', error);
+          console.error('Error checking page state:', error);
           // Don't throw, just continue to next iteration
           continue;
         }
