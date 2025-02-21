@@ -391,8 +391,46 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
             return {
               orderId: findValueByLabel('注文ID'),
-              orderTime: findValueByLabel('注文日時'),
-              deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
+              orderTime: (() => {
+                const rawTime = findValueByLabel('注文日時');
+                // Check if the date is already in the correct format
+                if (rawTime.includes('/')) {
+                  return rawTime;
+                }
+                // Try to parse and format the date
+                try {
+                  const date = new Date(rawTime);
+                  // Format date as YYYY/MM/DD HH:mm:ss
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const hours = String(date.getHours()).padStart(2, '0');
+                  const minutes = String(date.getMinutes()).padStart(2, '0');
+                  const seconds = String(date.getSeconds()).padStart(2, '0');
+                  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+                } catch {
+                  return rawTime;
+                }
+              })(),
+              deliveryTime: (() => {
+                const rawTime = findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時');
+                console.log('Raw delivery time:', rawTime);
+                // Parse the date and subtract 15 hours
+                try {
+                  const date = new Date(rawTime);
+                  date.setHours(date.getHours() - 15);
+                  // Format date as YYYY/MM/DD HH:mm:ss in 24-hour format
+                  const year = date.getFullYear();
+                  const month = String(date.getMonth() + 1).padStart(2, '0');
+                  const day = String(date.getDate()).padStart(2, '0');
+                  const hours = String(date.getHours()).padStart(2, '0');
+                  const minutes = String(date.getMinutes()).padStart(2, '0');
+                  const seconds = String(date.getSeconds()).padStart(2, '0');
+                  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+                } catch {
+                  return rawTime;
+                }
+              })(),
               paymentMethod: findValueByLabel('支払方法'),
               visitCount: findValueByLabel('店舗利用回数'),
               customerName: findValueByLabel('注文者氏名'),
@@ -490,7 +528,7 @@ export async function startOrderMonitoring(email: string, password: string, onNe
         // Verify page is still connected before any operations
         try {
           await monitoringPage.evaluate(() => document.title);
-        } catch (error) {
+        } catch {
           console.error('Page disconnected, will attempt to recreate on next iteration');
           await new Promise(resolve => setTimeout(resolve, 5000));
           continue;
@@ -865,8 +903,46 @@ export async function startOrderMonitoring(email: string, password: string, onNe
 
                 return {
                   orderId: findValueByLabel('注文ID'),
-                  orderTime: findValueByLabel('注文日時'),
-                  deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
+                  orderTime: (() => {
+                    const rawTime = findValueByLabel('注文日時');
+                    // Check if the date is already in the correct format
+                    if (rawTime.includes('/')) {
+                      return rawTime;
+                    }
+                    // Try to parse and format the date
+                    try {
+                      const date = new Date(rawTime);
+                      // Format date as YYYY/MM/DD HH:mm:ss
+                      const year = date.getFullYear();
+                      const month = String(date.getMonth() + 1).padStart(2, '0');
+                      const day = String(date.getDate()).padStart(2, '0');
+                      const hours = String(date.getHours()).padStart(2, '0');
+                      const minutes = String(date.getMinutes()).padStart(2, '0');
+                      const seconds = String(date.getSeconds()).padStart(2, '0');
+                      return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+                    } catch {
+                      return rawTime;
+                    }
+                  })(),
+                  deliveryTime: (() => {
+                    const rawTime = findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時');
+                    console.log('Raw delivery time:', rawTime);
+                    // Parse the date and subtract 15 hours
+                    try {
+                      const date = new Date(rawTime);
+                      date.setHours(date.getHours() - 15);
+                      // Format date as YYYY/MM/DD HH:mm:ss in 24-hour format
+                      const year = date.getFullYear();
+                      const month = String(date.getMonth() + 1).padStart(2, '0');
+                      const day = String(date.getDate()).padStart(2, '0');
+                      const hours = String(date.getHours()).padStart(2, '0');
+                      const minutes = String(date.getMinutes()).padStart(2, '0');
+                      const seconds = String(date.getSeconds()).padStart(2, '0');
+                      return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+                    } catch {
+                      return rawTime;
+                    }
+                  })(),
                   paymentMethod: findValueByLabel('支払方法'),
                   visitCount: findValueByLabel('店舗利用回数'),
                   customerName: findValueByLabel('注文者氏名'),
@@ -1442,8 +1518,46 @@ export async function scrapeOrders(email: string, password: string) {
 
           return {
             orderId: findValueByLabel('注文ID'),
-            orderTime: findValueByLabel('注文日時'),
-            deliveryTime: findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時'),
+            orderTime: (() => {
+              const rawTime = findValueByLabel('注文日時');
+              // Check if the date is already in the correct format
+              if (rawTime.includes('/')) {
+                return rawTime;
+              }
+              // Try to parse and format the date
+              try {
+                const date = new Date(rawTime);
+                // Format date as YYYY/MM/DD HH:mm:ss
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                const seconds = String(date.getSeconds()).padStart(2, '0');
+                return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+              } catch {
+                return rawTime;
+              }
+            })(),
+            deliveryTime: (() => {
+              const rawTime = findValueByLabel('配達/テイクアウト日時') || findValueByLabel('配達希望日時');
+              console.log('Raw delivery time:', rawTime);
+              // Parse the date and subtract 15 hours
+              try {
+                const date = new Date(rawTime);
+                date.setHours(date.getHours() - 15);
+                // Format date as YYYY/MM/DD HH:mm:ss in 24-hour format
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                const seconds = String(date.getSeconds()).padStart(2, '0');
+                return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+              } catch {
+                return rawTime;
+              }
+            })(),
             paymentMethod: findValueByLabel('支払方法'),
             visitCount: findValueByLabel('店舗利用回数'),
             customerName: findValueByLabel('注文者氏名'),
